@@ -1,6 +1,6 @@
 // Bump this on every deploy that changes any cached file — it forces old
 // caches to be dropped so users actually get the new version.
-const CACHE_VERSION = "v7";
+const CACHE_VERSION = "v8";
 const CACHE_NAME = "stock-radial-" + CACHE_VERSION;
 
 // Same-origin app shell + the two CDN libraries the app depends on.
@@ -53,6 +53,7 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
   const url = new URL(event.request.url);
+  if (url.origin === "https://adizjust.pythonanywhere.com" && url.pathname.startsWith("/api/")) return;
   if (url.origin === self.location.origin && url.pathname.endsWith("/stock.xlsx")) {
     event.respondWith(fetch(event.request, { cache: "no-store" }));
     return;

@@ -55,6 +55,8 @@
    *  null means "use the wheel's resting center" (the default look) */
   let ringOriginPoint = null;
   let toastTimer = null;
+  let sharedStockVersion = null;
+  let stockSyncBusy = false;
 
   // ---------------------------------------------------------------
   // Data loading
@@ -62,17 +64,28 @@
 
   async function loadStock() {
     try {
-      const res = await fetch(`stock.xlsx?t=${Date.now()}`, { cache: "no-store" });
+      let res = STOCK_API_BASE
+        ? await fetch(apiUrl("/api/stock"), { cache: "no-store" })
+        : null;
+      if (!res || res.status === 404) {
+        res = await fetch(`stock.xlsx?t=${Date.now()}`, { cache: "no-store" });
+      }
       if (!res.ok) throw new Error("HTTP " + res.status);
       const buf = await res.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array" });
       const rows = mergeWorkbookRows(wb);
-      tree = buildTree(rows);
+      const nextTree = buildTree(rows);
+      if (!Object.keys(nextTree).length) throw new Error("ไม่พบข้อมูล stock ที่ใช้ได้");
+      tree = nextTree;
+      path = [];
+      sharedStockVersion = res.headers.get("X-Stock-Version");
       dataSourceName = "stock.xlsx";
       hideOverlay();
       renderLevel();
+      return true;
     } catch (err) {
       showError(err);
+      return false;
     }
   }
 
@@ -107,6 +120,23 @@
     ws.onclose = () => {
       setTimeout(connectStockSocket, 2500);
     };
+  }
+
+  async function checkStockVersion() {
+    if (!STOCK_API_BASE || stockSyncBusy || document.hidden) return;
+    stockSyncBusy = true;
+    try {
+      const res = await fetch(apiUrl("/api/stock-version"), { cache: "no-store" });
+      if (!res.ok) return;
+      const { version } = await res.json();
+      if (version !== sharedStockVersion && await loadStock()) {
+        showToast("อัปเดตข้อมูลสต็อกแล้ว", "ok");
+      }
+    } catch (err) {
+      // Retry on the next poll when the network is available again.
+    } finally {
+      stockSyncBusy = false;
+    }
   }
 
   // Reads every sheet in a workbook and merges them into one flat row list.
@@ -210,6 +240,7 @@
     const file = ev.target.files && ev.target.files[0];
     importInput.value = ""; // allow re-selecting the same file again later
     if (!file) return;
+    stockSyncBusy = true;
     try {
       if (isPdfFile(file)) {
         await uploadPdf(file);
@@ -219,7 +250,7 @@
 
       const synced = await uploadStockFile(file);
       if (synced) {
-        await loadStock();
+        if (!await loadStock()) throw new Error("โหลดข้อมูลหลังอัปโหลดไม่สำเร็จ");
         showToast(`ซิงก์ stock.xlsx จาก "${file.name}" สำเร็จ`, "ok");
         return;
       }
@@ -228,6 +259,8 @@
       showToast(`นำเข้า "${file.name}" สำเร็จในเครื่องนี้`, "ok");
     } catch (err) {
       showToast("นำเข้าไฟล์ไม่สำเร็จ: " + (err && err.message ? err.message : String(err)), "err");
+    } finally {
+      stockSyncBusy = false;
     }
   });
 
@@ -257,7 +290,7 @@
 
     const contentType = res.headers.get("content-type") || "";
     if (contentType.includes("application/json")) {
-      await loadStock();
+      if (!await loadStock()) throw new Error("โหลดข้อมูลหลังอัปโหลดไม่สำเร็จ");
       return;
     }
 
@@ -270,16 +303,28 @@
     }
     tree = newTree;
     path = [];
+    sharedStockVersion = res.headers.get("X-Stock-Version");
     dataSourceName = file.name.replace(/\.pdf$/i, ".xlsx");
     hideOverlay();
     renderLevel();
   }
 
   async function uploadStockFile(file) {
-    if (file.name.toLowerCase().endsWith(".xls")) return false;
-
     const formData = new FormData();
-    formData.append("file", file);
+    if (STOCK_API_BASE) {
+      const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+      const rows = mergeWorkbookRows(wb);
+      if (!Object.keys(buildTree(rows)).length) {
+        throw new Error("ไม่พบข้อมูลที่ใช้ได้ในไฟล์นี้ (ตรวจคอลัมน์ Category/Model/Storage/Color/Qty)");
+      }
+      const normalized = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(normalized, XLSX.utils.json_to_sheet(rows), "Stock");
+      const bytes = XLSX.write(normalized, { bookType: "xlsx", type: "array" });
+      formData.append("file", new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), "stock.xlsx");
+    } else {
+      if (file.name.toLowerCase().endsWith(".xls")) return false;
+      formData.append("file", file);
+    }
 
     try {
       const res = await fetch(apiUrl("/api/upload-stock"), {
@@ -287,7 +332,7 @@
         body: formData
       });
 
-      if (res.status === 404 || res.status === 405) return false;
+      if (!STOCK_API_BASE && (res.status === 404 || res.status === 405)) return false;
 
       if (!res.ok) {
         let message = "HTTP " + res.status;
@@ -302,7 +347,7 @@
 
       return true;
     } catch (err) {
-      if (err instanceof TypeError) return false;
+      if (!STOCK_API_BASE && err instanceof TypeError) return false;
       throw err;
     }
   }
@@ -951,4 +996,11 @@
   // kick off
   connectStockSocket();
   loadStock();
+  if (STOCK_API_BASE) {
+    setInterval(checkStockVersion, 10000);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) checkStockVersion();
+    });
+    window.addEventListener("online", checkStockVersion);
+  }
 })();
