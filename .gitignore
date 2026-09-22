@@ -1,0 +1,12 @@
+README2(token).md
+PythonAnywhereDoc.md
+*.log
+__pycache__/
+*.py[cod]
+.env
+.venv/
+venv/
+backups/
+tools/
+logs/
+.server-state/

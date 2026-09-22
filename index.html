@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>STOCK // RADIAL v2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css?v=7">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0d0f0a">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- top HUD: breadcrumb trail -->
+  <header class="hud-top">
+    <div class="hud-brand">STOCK<span>//</span>RADIAL</div>
+    <nav id="crumbs" class="crumbs" aria-label="เส้นทางที่เลือก"></nav>
+  </header>
+
+  <!-- main wheel stage -->
+  <main class="stage">
+    <div class="wheel-wrap" id="wheelWrap">
+      <svg id="wheel" viewBox="0 0 400 400" aria-hidden="true"></svg>
+
+      <div class="hub-wrap" id="hubWrap">
+        <div class="hub" id="hub">
+          <div class="hub-inner" id="hubInner">
+            <div class="hub-title" id="hubTitle">กำลังโหลด</div>
+            <div class="hub-sub" id="hubSub">stock.xlsx</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <section class="product-grid hidden" id="productGrid" aria-label="รายการสินค้า">
+      <div class="product-grid-head">
+        <div class="product-grid-heading">
+          <span class="product-grid-kicker">PRODUCTS</span>
+          <h2 id="productGridTitle">รายการสินค้า</h2>
+        </div>
+        <span class="product-grid-count" id="productGridCount">0 รายการ</span>
+      </div>
+      <div class="product-grid-items" id="productGridItems"></div>
+    </section>
+
+    <p class="prompt" id="prompt">เชื่อมต่อฐานข้อมูล...</p>
+  </main>
+
+  <!-- bottom controls -->
+  <footer class="hud-bottom">
+    <button class="ctrl-btn" id="backBtn" disabled>
+      <svg viewBox="0 0 24 24"><path d="M15 4L7 12l8 8" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>ย้อนกลับ</span>
+    </button>
+    <button class="ctrl-btn ctrl-btn--ghost" id="resetBtn">
+      <svg viewBox="0 0 24 24"><path d="M12 4V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-8z" fill="currentColor"/></svg>
+      <span>เริ่มใหม่</span>
+    </button>
+    <button class="ctrl-btn ctrl-btn--ghost" id="importBtn">
+      <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>นำเข้าข้อมูล</span>
+    </button>
+    <input type="file" id="importInput" accept=".csv,.xlsx,.xls,.pdf,application/pdf" hidden>
+  </footer>
+
+  <!-- toast for import feedback -->
+  <div class="toast" id="toast"></div>
+
+  <!-- load / error overlay -->
+  <div class="overlay" id="overlay">
+    <div class="overlay-box">
+      <div class="overlay-spinner" id="overlaySpinner"></div>
+      <div class="overlay-text" id="overlayText">กำลังอ่าน stock.xlsx ...</div>
+      <div class="overlay-help" id="overlayHelp"></div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/animejs@3.2.2/lib/anime.min.js"></script>
+<script src="app.js?v=7"></script>
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("service-worker.js").catch((err) => {
+        console.warn("Service worker registration failed:", err);
+      });
+    });
+  }
+</script>
+</body>
+</html>
