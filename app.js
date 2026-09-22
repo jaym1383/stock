@@ -55,14 +55,37 @@
    *  null means "use the wheel's resting center" (the default look) */
   let ringOriginPoint = null;
   let toastTimer = null;
-  let sharedStockVersion = null;
-  let stockSyncBusy = false;
+  let stockRequestBusy = false;
+  let refreshCooldownUntil = 0;
+  let importCooldownUntil = 0;
+  let lastNavigationAt = -Infinity;
+
+  function updateCommandButtons() {
+    const now = Date.now();
+    resetBtn.disabled = stockRequestBusy || now < refreshCooldownUntil;
+    importBtn.disabled = stockRequestBusy || now < importCooldownUntil;
+  }
+
+  function finishCommand(button) {
+    stockRequestBusy = false;
+    if (button === resetBtn) refreshCooldownUntil = Date.now() + 3000;
+    if (button === importBtn) importCooldownUntil = Date.now() + 3000;
+    updateCommandButtons();
+    setTimeout(updateCommandButtons, 3000);
+  }
+
+  function allowNavigation() {
+    const now = performance.now();
+    if (now - lastNavigationAt < 180) return false;
+    lastNavigationAt = now;
+    return true;
+  }
 
   // ---------------------------------------------------------------
   // Data loading
   // ---------------------------------------------------------------
 
-  async function loadStock() {
+  async function loadStock(showFailureOverlay = true) {
     try {
       let res = STOCK_API_BASE
         ? await fetch(apiUrl("/api/stock"), { cache: "no-store" })
@@ -78,13 +101,16 @@
       if (!Object.keys(nextTree).length) throw new Error("ไม่พบข้อมูล stock ที่ใช้ได้");
       tree = nextTree;
       path = [];
-      sharedStockVersion = res.headers.get("X-Stock-Version");
       dataSourceName = "stock.xlsx";
       hideOverlay();
       renderLevel();
       return true;
     } catch (err) {
-      showError(err);
+      if (showFailureOverlay) {
+        showError(err);
+      } else {
+        showToast("โหลดข้อมูลใหม่ไม่สำเร็จ: " + (err && err.message ? err.message : String(err)), "err");
+      }
       return false;
     }
   }
@@ -120,23 +146,6 @@
     ws.onclose = () => {
       setTimeout(connectStockSocket, 2500);
     };
-  }
-
-  async function checkStockVersion() {
-    if (!STOCK_API_BASE || stockSyncBusy || document.hidden) return;
-    stockSyncBusy = true;
-    try {
-      const res = await fetch(apiUrl("/api/stock-version"), { cache: "no-store" });
-      if (!res.ok) return;
-      const { version } = await res.json();
-      if (version !== sharedStockVersion && await loadStock()) {
-        showToast("อัปเดตข้อมูลสต็อกแล้ว", "ok");
-      }
-    } catch (err) {
-      // Retry on the next poll when the network is available again.
-    } finally {
-      stockSyncBusy = false;
-    }
   }
 
   // Reads every sheet in a workbook and merges them into one flat row list.
@@ -234,13 +243,16 @@
   // Import (.csv / .xlsx / .xls)
   // ---------------------------------------------------------------
 
-  importBtn.addEventListener("click", () => importInput.click());
+  importBtn.addEventListener("click", () => {
+    if (!stockRequestBusy && Date.now() >= importCooldownUntil) importInput.click();
+  });
 
   importInput.addEventListener("change", async (ev) => {
     const file = ev.target.files && ev.target.files[0];
     importInput.value = ""; // allow re-selecting the same file again later
-    if (!file) return;
-    stockSyncBusy = true;
+    if (!file || stockRequestBusy || Date.now() < importCooldownUntil) return;
+    stockRequestBusy = true;
+    updateCommandButtons();
     try {
       if (isPdfFile(file)) {
         await uploadPdf(file);
@@ -260,7 +272,7 @@
     } catch (err) {
       showToast("นำเข้าไฟล์ไม่สำเร็จ: " + (err && err.message ? err.message : String(err)), "err");
     } finally {
-      stockSyncBusy = false;
+      finishCommand(importBtn);
     }
   });
 
@@ -303,7 +315,6 @@
     }
     tree = newTree;
     path = [];
-    sharedStockVersion = res.headers.get("X-Stock-Version");
     dataSourceName = file.name.replace(/\.pdf$/i, ".xlsx");
     hideOverlay();
     renderLevel();
@@ -555,6 +566,7 @@
   // ---------------------------------------------------------------
 
   function pickValue(value) {
+    if (!allowNavigation()) return;
     path.push(value);
     renderLevel();
   }
@@ -982,25 +994,33 @@
   // ---------------------------------------------------------------
 
   backBtn.addEventListener("click", () => {
-    if (path.length === 0) return;
+    if (path.length === 0 || !allowNavigation()) return;
     path.pop();
     renderLevel();
   });
 
-  resetBtn.addEventListener("click", () => {
-    if (path.length === 0) return;
+  resetBtn.addEventListener("click", async () => {
+    if (stockRequestBusy || Date.now() < refreshCooldownUntil) return;
+    stockRequestBusy = true;
+    updateCommandButtons();
     path = [];
-    renderLevel();
+    try {
+      if (await loadStock(false)) {
+        showToast("โหลดข้อมูลสต็อกล่าสุดแล้ว", "ok");
+      } else {
+        renderLevel();
+      }
+    } finally {
+      finishCommand(resetBtn);
+    }
   });
 
   // kick off
   connectStockSocket();
-  loadStock();
-  if (STOCK_API_BASE) {
-    setInterval(checkStockVersion, 10000);
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) checkStockVersion();
-    });
-    window.addEventListener("online", checkStockVersion);
-  }
+  stockRequestBusy = true;
+  updateCommandButtons();
+  loadStock().finally(() => {
+    stockRequestBusy = false;
+    updateCommandButtons();
+  });
 })();
