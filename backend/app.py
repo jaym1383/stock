@@ -4,8 +4,6 @@ from tempfile import TemporaryDirectory
 
 from flask import Flask, jsonify, make_response, request, send_file
 
-from pdf_to_stock import build_rows, extract_records, write_workbook
-
 
 app = Flask(__name__)
 
@@ -52,6 +50,8 @@ def convert_pdf():
         return jsonify({"detail": "Only PDF files are supported."}), 400
 
     try:
+        from pdf_to_stock import build_rows, extract_records, write_workbook
+
         with TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             pdf_path = tmp_dir / "input.pdf"
