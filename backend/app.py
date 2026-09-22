@@ -51,7 +51,12 @@ def convert_pdf():
 
     try:
         from pdf_to_stock import build_rows, extract_records, write_workbook
+    except SystemExit as exc:
+        return jsonify({"detail": str(exc) or "Converter dependency is missing."}), 500
+    except ImportError as exc:
+        return jsonify({"detail": f"Converter dependency is missing: {exc}"}), 500
 
+    try:
         with TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             pdf_path = tmp_dir / "input.pdf"
