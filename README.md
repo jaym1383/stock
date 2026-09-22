@@ -48,3 +48,11 @@ python3.13 -m pip install --user -r requirements.txt
 ```text
 https://adizjust.pythonanywhere.com/health
 ```
+
+## Verification
+
+ทดสอบล่าสุดแล้ว:
+
+- GitHub Pages เปิดได้ที่ `https://jaym1383.github.io/stock/`
+- PythonAnywhere `/health` ตอบ `{"ok": true}`
+- อัปโหลด PDF ผ่านหน้าเว็บจริงสำเร็จ และ backend คืน `stock.xlsx` กลับมาให้ UI อ่านทันที
