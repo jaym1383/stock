@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
-<title>STOCK // RADIAL v2</title>
+<title>Jaymart Stock</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=9">
+<link rel="stylesheet" href="style.css?v=10">
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0d0f0a">
 <link rel="icon" href="icons/icon-192.png">
@@ -18,8 +18,16 @@
 
   <!-- top HUD: breadcrumb trail -->
   <header class="hud-top">
-    <div class="hud-brand">STOCK<span>//</span>RADIAL</div>
+    <div class="hud-brand">Jaymart <span>Stock</span></div>
     <nav id="crumbs" class="crumbs" aria-label="เส้นทางที่เลือก"></nav>
+    <button class="search-toggle" id="searchToggle" type="button" aria-label="ค้นหารุ่นสินค้า" aria-expanded="false" aria-controls="searchPanel" title="ค้นหารุ่นสินค้า">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16 16 5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+    <div class="search-panel" id="searchPanel" aria-hidden="true">
+      <label class="search-label" for="searchInput">ค้นหารุ่นสินค้า</label>
+      <input id="searchInput" type="search" placeholder="พิมพ์ชื่อรุ่น..." autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-controls="searchResults" aria-expanded="false">
+      <div class="search-results" id="searchResults" role="listbox"></div>
+    </div>
   </header>
 
   <!-- main wheel stage -->
@@ -84,7 +92,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/animejs@3.2.2/lib/anime.min.js"></script>
-<script src="app.js?v=9"></script>
+<script src="app.js?v=10"></script>
 <script>
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {

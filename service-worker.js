@@ -1,6 +1,6 @@
 // Bump this on every deploy that changes any cached file — it forces old
 // caches to be dropped so users actually get the new version.
-const CACHE_VERSION = "v9";
+const CACHE_VERSION = "v10";
 const CACHE_NAME = "stock-radial-" + CACHE_VERSION;
 
 // Same-origin app shell + the two CDN libraries the app depends on.

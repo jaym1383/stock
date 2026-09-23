@@ -1,6 +1,6 @@
 {
-  "name": "STOCK // RADIAL",
-  "short_name": "Stock Radial",
+  "name": "Jaymart Stock",
+  "short_name": "Jaymart Stock",
   "description": "ระบบดูสต๊อกสินค้าแบบ Radial Menu",
   "start_url": "./index.html",
   "scope": "./",

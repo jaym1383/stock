@@ -39,6 +39,12 @@
   const productGridTitle = el("productGridTitle");
   const productGridCount = el("productGridCount");
   const productGridItems = el("productGridItems");
+  const searchToggle = el("searchToggle");
+  const searchPanel = el("searchPanel");
+  const searchInput = el("searchInput");
+  const searchResults = el("searchResults");
+  let searchMatches = [];
+  let searchActive = -1;
 
   /** @type {Object} nested tree: {category:{model:{storage:{color: {qty, itemCode}}}}} */
   let tree = {};
@@ -100,6 +106,7 @@
       const nextTree = buildTree(rows);
       if (!Object.keys(nextTree).length) throw new Error("ไม่พบข้อมูล stock ที่ใช้ได้");
       tree = nextTree;
+      renderSearchResults();
       path = [];
       dataSourceName = "stock.xlsx";
       hideOverlay();
@@ -570,6 +577,119 @@
     path.push(value);
     renderLevel();
   }
+
+  function modelMatches(query) {
+    const words = query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return [];
+    const matches = [];
+    for (const [category, models] of Object.entries(tree)) {
+      for (const [model, variants] of Object.entries(models)) {
+        const modelText = model.toLocaleLowerCase();
+        const fullText = `${category} ${model}`.toLocaleLowerCase();
+        const compactText = fullText.replace(/\s+/g, "");
+        const tokens = fullText.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+        if (!words.every((word) => fullText.includes(word) || compactText.includes(word) || tokens.some((token) => isNearWord(word, token)))) continue;
+        let score = words.reduce((sum, word) => sum + (modelText.startsWith(word) ? 5 : modelText.includes(word) ? 3 : compactText.includes(word) ? 2 : 0), 0);
+        if (modelText === words.join(" ")) score += 20;
+        matches.push({ category, model, qty: getTotalQty(variants), score });
+      }
+    }
+    return matches.sort((a, b) => b.score - a.score || a.model.length - b.model.length || a.model.localeCompare(b.model)).slice(0, 6);
+  }
+
+  function isNearWord(a, b) {
+    if (a.length < 4 || Math.abs(a.length - b.length) > 1) return false;
+    let i = 0, j = 0, edits = 0;
+    while (i < a.length && j < b.length) {
+      if (a[i] === b[j]) { i++; j++; continue; }
+      if (++edits > 1) return false;
+      if (a.length >= b.length) i++;
+      if (b.length >= a.length) j++;
+    }
+    return edits + (i < a.length || j < b.length ? 1 : 0) <= 1;
+  }
+
+  function renderSearchResults() {
+    searchMatches = modelMatches(searchInput.value);
+    searchActive = -1;
+    searchResults.replaceChildren();
+    searchInput.setAttribute("aria-expanded", searchMatches.length ? "true" : "false");
+    if (!searchInput.value.trim()) return;
+    if (!searchMatches.length) {
+      const empty = document.createElement("div");
+      empty.className = "search-empty";
+      empty.textContent = "ไม่พบรุ่นที่ตรงกับคำค้น";
+      searchResults.appendChild(empty);
+      return;
+    }
+    searchMatches.forEach((item, index) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "search-result";
+      row.setAttribute("role", "option");
+      row.id = `search-option-${index}`;
+      row.setAttribute("aria-selected", "false");
+      const name = document.createElement("span");
+      name.className = "search-result-name";
+      name.textContent = item.model;
+      const meta = document.createElement("span");
+      meta.className = "search-result-meta";
+      meta.textContent = `${item.category} · ${item.qty} เครื่อง`;
+      row.append(name, meta);
+      row.addEventListener("click", () => selectSearchResult(index));
+      searchResults.appendChild(row);
+    });
+  }
+
+  function setSearchActive(index) {
+    searchActive = index;
+    Array.from(searchResults.children).forEach((row, i) => {
+      row.classList.toggle("search-result--active", i === index);
+      row.setAttribute("aria-selected", i === index ? "true" : "false");
+    });
+    if (index >= 0) searchInput.setAttribute("aria-activedescendant", `search-option-${index}`);
+    else searchInput.removeAttribute("aria-activedescendant");
+  }
+
+  function closeSearch() {
+    searchPanel.classList.remove("search-panel--open");
+    searchPanel.setAttribute("aria-hidden", "true");
+    searchToggle.setAttribute("aria-expanded", "false");
+    searchInput.blur();
+  }
+
+  function selectSearchResult(index) {
+    const item = searchMatches[index];
+    if (!item) return;
+    path = [item.category, item.model];
+    closeSearch();
+    renderLevel();
+  }
+
+  searchToggle.addEventListener("click", () => {
+    const open = !searchPanel.classList.contains("search-panel--open");
+    searchPanel.classList.toggle("search-panel--open", open);
+    searchPanel.setAttribute("aria-hidden", open ? "false" : "true");
+    searchToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) searchInput.focus();
+  });
+  searchInput.addEventListener("input", renderSearchResults);
+  searchInput.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") { closeSearch(); searchToggle.focus(); return; }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      if (!searchMatches.length) return;
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      setSearchActive((searchActive + step + searchMatches.length) % searchMatches.length);
+    }
+    if (event.key === "Enter" && searchMatches.length) {
+      event.preventDefault();
+      selectSearchResult(searchActive < 0 ? 0 : searchActive);
+    }
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (!searchPanel.contains(event.target) && !searchToggle.contains(event.target)) closeSearch();
+  });
 
   // ---------------------------------------------------------------
   // Draggable center hub — drag it out to a category/segment; releasing
