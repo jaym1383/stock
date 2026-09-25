@@ -1,6 +1,6 @@
 // Bump this on every deploy that changes any cached file — it forces old
 // caches to be dropped so users actually get the new version.
-const CACHE_VERSION = "v11";
+const CACHE_VERSION = "v12";
 const CACHE_NAME = "stock-radial-" + CACHE_VERSION;
 
 // Same-origin app shell + the two CDN libraries the app depends on.
@@ -11,10 +11,11 @@ const PRECACHE_URLS = [
   "./style.css",
   "./app.js",
   "./manifest.json",
-  "./icons/icon-192.png",
-  "./icons/icon-192-maskable.png",
-  "./icons/icon-512.png",
-  "./icons/icon-512-maskable.png",
+  "./team-loader.html",
+  "./icons/icon-192-centered.png",
+  "./icons/icon-192-maskable-centered.png",
+  "./icons/icon-512-centered.png",
+  "./icons/icon-512-maskable-centered.png",
   "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js",
   "https://cdn.jsdelivr.net/npm/animejs@3.2.2/lib/anime.min.js",
   "https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Rajdhani:wght@500;600;700&display=swap"

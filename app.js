@@ -101,6 +101,7 @@
   // ---------------------------------------------------------------
 
   async function loadStock(showFailureOverlay = true) {
+    const startedAt = performance.now();
     try {
       let res = STOCK_API_BASE
         ? await fetch(apiUrl("/api/stock"), { cache: "no-store" })
@@ -118,6 +119,9 @@
       renderSearchResults();
       path = [];
       dataSourceName = "stock.xlsx";
+      if (!overlay.classList.contains("hidden")) {
+        await new Promise((resolve) => setTimeout(resolve, Math.max(0, 1200 - (performance.now() - startedAt))));
+      }
       hideOverlay();
       renderLevel();
       return true;
@@ -243,6 +247,8 @@
 
   function showError(err) {
     overlay.classList.remove("hidden");
+    overlay.classList.add("overlay--error");
+    el("teamLoaderFrame")?.remove();
     overlaySpinner.style.display = "none";
     overlayText.textContent = "โหลด stock.xlsx ไม่สำเร็จ";
     overlayHelp.innerHTML =
@@ -253,6 +259,7 @@
 
   function hideOverlay() {
     overlay.classList.add("hidden");
+    setTimeout(() => el("teamLoaderFrame")?.remove(), 300);
   }
 
   // ---------------------------------------------------------------

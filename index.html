@@ -6,11 +6,11 @@
 <title>Jaymart Stock</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=11">
-<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="style.css?v=12">
+<link rel="manifest" href="manifest.json?v=12">
 <meta name="theme-color" content="#a00000">
-<link rel="icon" href="icons/icon-192.png">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" href="icons/icon-192-centered.png">
+<link rel="apple-touch-icon" href="icons/icon-192-centered.png">
 </head>
 <body>
 
@@ -85,6 +85,7 @@
   <!-- load / error overlay -->
   <div class="overlay" id="overlay">
     <div class="overlay-box">
+      <iframe class="team-loader-frame" id="teamLoaderFrame" src="team-loader.html" title="ทีมงานกำลังเตรียมข้อมูล" sandbox="allow-scripts" loading="eager"></iframe>
       <div class="overlay-spinner" id="overlaySpinner"></div>
       <div class="overlay-text" id="overlayText">กำลังอ่าน stock.xlsx ...</div>
       <div class="overlay-help" id="overlayHelp"></div>
@@ -101,7 +102,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/animejs@3.2.2/lib/anime.min.js"></script>
-<script src="app.js?v=11"></script>
+<script src="app.js?v=12"></script>
 <script>
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
