@@ -43,8 +43,17 @@
   const searchPanel = el("searchPanel");
   const searchInput = el("searchInput");
   const searchResults = el("searchResults");
+  const stage = document.querySelector(".stage");
+  const importControl = el("importControl");
+  const importCollapse = el("importCollapse");
+  const codeOverlay = el("codeOverlay");
+  const expandedItemCode = el("expandedItemCode");
   let searchMatches = [];
   let searchActive = -1;
+  let pendingOverviewState = null;
+  let codeReturnFocus = null;
+  let importExpanded = false;
+  let pickerOpen = false;
 
   /** @type {Object} nested tree: {category:{model:{storage:{color: {qty, itemCode}}}}} */
   let tree = {};
@@ -250,12 +259,38 @@
   // Import (.csv / .xlsx / .xls)
   // ---------------------------------------------------------------
 
+  function setImportExpanded(expanded) {
+    importExpanded = expanded;
+    importControl.classList.toggle("import-control--expanded", expanded);
+    importBtn.setAttribute("aria-expanded", String(expanded));
+    importBtn.setAttribute("aria-label", expanded ? "เลือกไฟล์นำเข้า" : "นำเข้าข้อมูล");
+    importCollapse.hidden = !expanded;
+  }
+
   importBtn.addEventListener("click", () => {
-    if (!stockRequestBusy && Date.now() >= importCooldownUntil) importInput.click();
+    if (stockRequestBusy || Date.now() < importCooldownUntil) return;
+    if (!importExpanded) { setImportExpanded(true); return; }
+    pickerOpen = true;
+    importInput.click();
+  });
+  importCollapse.addEventListener("click", () => setImportExpanded(false));
+  importInput.addEventListener("cancel", () => { pickerOpen = false; setImportExpanded(false); });
+  window.addEventListener("focus", () => {
+    if (pickerOpen) setTimeout(() => {
+      if (pickerOpen) { pickerOpen = false; setImportExpanded(false); }
+    }, 300);
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (importExpanded && !importControl.contains(event.target)) setImportExpanded(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && importExpanded) setImportExpanded(false);
   });
 
   importInput.addEventListener("change", async (ev) => {
     const file = ev.target.files && ev.target.files[0];
+    pickerOpen = false;
+    setImportExpanded(false);
     importInput.value = ""; // allow re-selecting the same file again later
     if (!file || stockRequestBusy || Date.now() < importCooldownUntil) return;
     stockRequestBusy = true;
@@ -323,6 +358,7 @@
     tree = newTree;
     path = [];
     dataSourceName = file.name.replace(/\.pdf$/i, ".xlsx");
+    renderSearchResults();
     hideOverlay();
     renderLevel();
   }
@@ -381,6 +417,7 @@
     tree = newTree;
     path = [];
     dataSourceName = file.name;
+    renderSearchResults();
     renderLevel();
   }
 
@@ -494,6 +531,9 @@
 
       const wrapper = document.createElementNS(XHTML_NS, "div");
       wrapper.setAttribute("class", "seg-label");
+      const labelLength = String(item.label).length;
+      wrapper.style.setProperty("--label-size", `${Math.max(11, (n > 6 ? 16 : 18) - Math.max(0, Math.ceil((labelLength - 9) / 4)))}px`);
+      wrapper.style.setProperty("--label-width", n > 6 ? "88px" : "110px");
       wrapper.innerHTML = renderLabelContent(item);
       fo.appendChild(wrapper);
       g.appendChild(fo);
@@ -524,13 +564,7 @@
   }
 
   function renderLabelContent(item) {
-    const main = escapeHtml(formatItemLabel(item));
-    const sub = item.sub ? `<span class="seg-label-sub">${escapeHtml(item.sub)}</span>` : "";
-    return `<span class="seg-label-inner">${main}${sub}</span>`;
-  }
-
-  function formatItemLabel(item) {
-    return Number.isFinite(item.qty) ? `${item.label} (${item.qty})` : item.label;
+    return `<span class="seg-label-inner"><span class="seg-label-name">${escapeHtml(item.label)}</span>${Number.isFinite(item.qty) ? `<span class="seg-label-qty">(${item.qty})</span>` : ""}</span>`;
   }
 
   function buildImageSearchUrl(parts) {
@@ -915,9 +949,15 @@
       card.className = "product-grid-card";
       card.type = "button";
       card.style.setProperty("--grid-i", index);
+      const initial = Array.from(item.label.trim()).find((char) => /[\p{L}\p{N}]/u.test(char)) || "#";
+      const tone = (initial.toUpperCase().codePointAt(0) * 5) % 26;
+      const background = 222 + tone;
+      const accent = 130 + tone * 3;
+      card.style.setProperty("--grid-gray", `rgb(${background} ${background} ${background})`);
+      card.style.setProperty("--grid-gray-edge", `rgb(${accent} ${accent} ${accent})`);
       card.innerHTML = `
-        <span class="product-grid-index">${String(index + 1).padStart(2, "0")}</span>
-        <span class="product-grid-name">${escapeHtml(formatItemLabel(item))}</span>
+        <span class="product-grid-name">${escapeHtml(item.label)}</span>
+        <span class="product-grid-qty">${Number.isFinite(item.qty) ? `(${item.qty})` : ""}</span>
         <span class="product-grid-arrow">›</span>
       `;
       card.addEventListener("click", (ev) => {
@@ -1007,7 +1047,7 @@
   function updateHub() {
     if (path.length === 0) {
       hubTitle.textContent = "STOCK";
-      hubSub.textContent = dataSourceName;
+      hubSub.textContent = "";
     } else if (path.length < 4) {
       hubTitle.textContent = truncate(path[path.length - 1], 12);
       hubSub.textContent = `ขั้นตอน ${path.length}/4`;
@@ -1051,8 +1091,124 @@
 
   function removeResultCard() {
     const existing = document.querySelector(".result-card-pos");
-    if (existing) existing.remove();
+    if (existing) {
+      if (existing.codeResizeObserver) existing.codeResizeObserver.disconnect();
+      existing.remove();
+    }
+    closeCodeOverlay(false);
+    stage.classList.remove("stage--result");
+    wheelWrap.classList.remove("wheel-wrap--result");
     hubWrap.style.display = "flex";
+  }
+
+  function fitCode(element, maximum) {
+    if (!element || !element.isConnected || !element.clientWidth) return;
+    let size = maximum;
+    element.style.fontSize = `${size}px`;
+    while (element.scrollWidth > element.clientWidth && size > 1) {
+      size -= 0.5;
+      element.style.fontSize = `${size}px`;
+    }
+  }
+
+  function closeCodeOverlay(restoreFocus = true) {
+    if (codeOverlay.hidden) return;
+    codeOverlay.hidden = true;
+    if (restoreFocus && codeReturnFocus && codeReturnFocus.isConnected) codeReturnFocus.focus();
+    codeReturnFocus = null;
+  }
+
+  function openCodeOverlay(code, returnFocus) {
+    codeReturnFocus = returnFocus;
+    expandedItemCode.textContent = code;
+    codeOverlay.hidden = false;
+    expandedItemCode.focus();
+    requestAnimationFrame(() => fitCode(expandedItemCode, 48));
+    document.fonts.ready.then(() => fitCode(expandedItemCode, 48));
+  }
+
+  codeOverlay.addEventListener("click", (event) => {
+    if (event.target === codeOverlay || event.target === expandedItemCode) closeCodeOverlay();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !codeOverlay.hidden) closeCodeOverlay();
+  });
+  window.addEventListener("resize", () => {
+    if (!codeOverlay.hidden) fitCode(expandedItemCode, 48);
+  });
+
+  function captureOverviewState(card) {
+    const toggle = card.querySelector(".overview-toggle");
+    return {
+      open: toggle.getAttribute("aria-expanded") === "true",
+      stageScrollTop: stage.scrollTop,
+      expanded: new Set(Array.from(card.querySelectorAll(".overview-group-toggle[aria-expanded='true']"), (button) => button.dataset.storage))
+    };
+  }
+
+  function renderOverview(card, previousState) {
+    const modelStock = tree[path[0]] && tree[path[0]][path[1]];
+    const toggle = card.querySelector(".overview-toggle");
+    const panel = card.querySelector(".overview-panel");
+    const list = card.querySelector(".overview-list");
+
+    for (const [storage, colors] of Object.entries(modelStock || {})) {
+      const available = Object.entries(colors).filter(([, stock]) => getTotalQty(stock) > 0);
+      if (!available.length) continue;
+      const group = document.createElement("div");
+      group.className = "overview-group";
+      const groupToggle = document.createElement("button");
+      groupToggle.type = "button";
+      groupToggle.className = "overview-group-toggle";
+      groupToggle.dataset.storage = storage;
+      const groupOpen = previousState ? previousState.expanded.has(storage) : true;
+      groupToggle.setAttribute("aria-expanded", String(groupOpen));
+      const groupTitle = document.createElement("span");
+      groupTitle.textContent = storage;
+      const groupCount = document.createElement("span");
+      groupCount.className = "overview-group-count";
+      groupCount.textContent = `${available.reduce((sum, [, stock]) => sum + getTotalQty(stock), 0)} เครื่อง`;
+      groupToggle.append(groupTitle, groupCount);
+      const colorsBox = document.createElement("div");
+      colorsBox.className = "overview-colors";
+      colorsBox.hidden = !groupOpen;
+      groupToggle.addEventListener("click", () => {
+        const next = groupToggle.getAttribute("aria-expanded") !== "true";
+        groupToggle.setAttribute("aria-expanded", String(next));
+        colorsBox.hidden = !next;
+      });
+      for (const [color, stock] of available) {
+        const choice = document.createElement("button");
+        choice.type = "button";
+        choice.className = "overview-color" + (storage === path[2] && color === path[3] ? " overview-color--selected" : "");
+        const colorName = document.createElement("span");
+        colorName.textContent = color;
+        const colorQty = document.createElement("span");
+        colorQty.className = "overview-color-qty";
+        colorQty.textContent = `(${getTotalQty(stock)})`;
+        choice.append(colorName, colorQty);
+        choice.addEventListener("click", () => {
+          pendingOverviewState = captureOverviewState(card);
+          path = [path[0], path[1], storage, color];
+          renderLevel();
+        });
+        colorsBox.appendChild(choice);
+      }
+      group.append(groupToggle, colorsBox);
+      list.appendChild(group);
+    }
+
+    const open = previousState ? previousState.open : false;
+    toggle.setAttribute("aria-expanded", String(open));
+    panel.hidden = !open;
+    toggle.addEventListener("click", () => {
+      const next = toggle.getAttribute("aria-expanded") !== "true";
+      toggle.setAttribute("aria-expanded", String(next));
+      panel.hidden = !next;
+    });
+    requestAnimationFrame(() => {
+      if (previousState) stage.scrollTop = previousState.stageScrollTop;
+    });
   }
 
   function showResult(stock) {
@@ -1072,33 +1228,43 @@
     const maxScale = 12; // reference scale for the stock bar (purely visual)
     const pct = Math.max(6, Math.min(100, Math.round((qty / maxScale) * 100)));
     const imageSearchUrl = buildImageSearchUrl(path);
+    const overviewState = pendingOverviewState;
+    pendingOverviewState = null;
 
     card.innerHTML = `
-      <div class="result-actions">
-        <button class="result-action-btn result-expand-btn" type="button" aria-pressed="false">ขยาย</button>
+      <div class="result-head">
+        <div class="result-eyebrow">${escapeHtml(path[0])} · ${escapeHtml(path[2])}</div>
+        <div class="result-model">${escapeHtml(path[1])}</div>
         <a class="result-action-btn" href="${escapeHtml(imageSearchUrl)}" target="_blank" rel="noopener noreferrer">ดูรูป</a>
+        ${itemCode ? `<div class="result-code-section"><button class="result-item-code" type="button" aria-label="ขยายรหัสสินค้า">${escapeHtml(itemCode)}</button><button class="code-zoom-btn" type="button" aria-label="ขยายรหัสสินค้า" title="ขยายรหัสสินค้า"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16 16 5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div>` : ""}
       </div>
-      <div class="result-eyebrow">${escapeHtml(path[0])} · ${escapeHtml(path[2])}</div>
-      <div class="result-model">${escapeHtml(path[1])}</div>
-      <div class="result-variant">${escapeHtml(path[3])}</div>
-      ${itemCode ? `<div class="result-item-code">Item Code: ${escapeHtml(itemCode)}</div>` : ""}
-      <div class="result-qty-row">
-        <div class="result-qty-num">${qty}</div>
-        <div class="result-qty-label">เครื่องคงเหลือ</div>
+      <div class="result-body">
+        <div class="result-variant">${escapeHtml(path[3])}</div>
+        <div class="result-qty-row">
+          <div class="result-qty-num">${qty}</div>
+          <div class="result-qty-label">เครื่องคงเหลือ</div>
+        </div>
+        <div class="result-bar-track"><div class="result-bar-fill" id="resultBarFill"></div></div>
+        <div class="stock-overview">
+          <button class="overview-toggle" type="button" aria-expanded="false">ความจุและสีที่มีสต็อก <span class="overview-chevron" aria-hidden="true">⌄</span></button>
+          <div class="overview-panel" hidden><div class="overview-list"></div></div>
+        </div>
       </div>
-      <div class="result-bar-track"><div class="result-bar-fill" id="resultBarFill"></div></div>
-      <div class="result-note">แตะ "ย้อนกลับ" เพื่อเลือกสีอื่น หรือ "เริ่มใหม่" เพื่อดูสินค้าอื่น</div>
     `;
     pos.appendChild(card);
     wheelWrap.appendChild(pos);
+    stage.classList.add("stage--result");
+    wheelWrap.classList.add("wheel-wrap--result");
+    renderOverview(card, overviewState);
 
-    const expandBtn = card.querySelector(".result-expand-btn");
-    if (expandBtn) {
-      expandBtn.addEventListener("click", () => {
-        const expanded = card.classList.toggle("result-card--expanded");
-        expandBtn.setAttribute("aria-pressed", expanded ? "true" : "false");
-        expandBtn.textContent = expanded ? "ย่อ" : "ขยาย";
-      });
+    const codeButton = card.querySelector(".result-item-code");
+    if (codeButton) {
+      codeButton.addEventListener("click", () => openCodeOverlay(itemCode, codeButton));
+      card.querySelector(".code-zoom-btn").addEventListener("click", () => openCodeOverlay(itemCode, codeButton));
+      const observer = new ResizeObserver(() => fitCode(codeButton, 36));
+      observer.observe(codeButton);
+      pos.codeResizeObserver = observer;
+      document.fonts.ready.then(() => fitCode(codeButton, 36));
     }
 
     anime({ targets: card, opacity: [0, 1], scale: [0.85, 1], easing: "easeOutElastic(1, .7)", duration: 620 });
