@@ -751,11 +751,24 @@ body{
 }
 
 /* Jaymart daytime theme */
-.hud-top{ background:#a00000; color:#fff; padding:12px 16px 10px; }
+.hud-top{ background:#a00000; color:#fff; padding:8px 12px 6px; gap:4px; }
 .hud-brand,.hud-brand span{ color:#fff; }
-.hud-brand{ display:flex; flex-direction:column; align-items:center; gap:3px; letter-spacing:0; }
-.hud-wordmark{ display:block; width:210px; max-width:100%; height:42px; }
-.hud-brand .hud-brand-subtitle{ margin:0; font:700 10px/12px system-ui,sans-serif; letter-spacing:0; }
+.hud-brand{ display:flex; flex-direction:row; align-items:center; justify-content:center; gap:5px; letter-spacing:0; max-width:100%; }
+.hud-wordmark{ display:block; width:150px; max-width:65%; height:30px; }
+.hud-brand .hud-brand-subtitle{ margin:0; font:italic 900 23px/30px Arial,sans-serif; letter-spacing:0; }
+.crumbs:empty{ display:none; }
+.search-toolbar{position:relative;z-index:8;display:flex;justify-content:flex-end;flex:0 0 auto;padding:4px 12px;background:#fff;}
+.search-toolbar .search-toggle{border-color:#e3cccc;}
+.search-toolbar .search-panel{left:auto;right:12px;transform:scaleY(0);transform-origin:top right;}
+.search-toolbar .search-panel--open{transform:scaleY(1);}
+.search-toolbar{align-items:center;gap:8px;}
+#offlineNotice{margin-right:auto;font:12px/1.5 Arial,sans-serif;color:#644315;}
+#offlineNotice summary{cursor:pointer;padding:4px 8px;background:#fff1db;border:1px solid #e0c38b;border-radius:4px;}
+.offline-details{position:absolute;top:100%;left:12px;width:min(290px,calc(100vw - 24px));box-sizing:border-box;padding:12px;background:#fff9ed;border:1px solid #e0c38b;border-radius:6px;box-shadow:0 5px 18px #0002;z-index:20;}
+.offline-details p{margin:0 0 6px;}
+#offlineEmpty{padding:20px;text-align:center;color:#555;}
+.hud-bottom{flex-wrap:wrap;}
+#syncBtn{width:38px;justify-content:center;}
 .search-toggle{ background:#fff; border-color:#fff; color:#a00000; }
 .search-toggle:hover,.search-toggle[aria-expanded="true"]{ background:#f7e5e5; border-color:#fff; }
 .search-panel{ background:#fff; border-color:#d3d3d3; box-shadow:0 16px 32px rgba(48,52,56,.18); color:var(--ink); }
@@ -833,9 +846,9 @@ body{
 .hub.hub--dragging .hub-inner{ visibility:hidden; }
 .hub.hub--dragging::before{ visibility:visible; opacity:1; }
 @media (prefers-reduced-motion:reduce){ .tile-visual,.tile-orbit,.seg-group.seg-armed .tile-visual{ transition:none; animation:none; } }
-/* Explicit tile feedback; other reduced-motion preferences remain intact. */
+/* Explicit animation preview; other reduced-motion preferences remain intact. */
 @media (prefers-reduced-motion:reduce){
-  html[data-tile-motion="true"] .seg-group.seg-armed .tile-visual{ animation:tile-point-bounce .62s both; }
+  html[data-preview-tile-motion="true"] .seg-group.seg-armed .tile-visual{ animation:tile-point-bounce .62s both; }
 }
 .hub.hub--dragging{ box-shadow:inset 0 0 0 5px #f8eded,0 0 0 5px rgba(160,0,0,.16); }
 .hub-title{ color:#a00000; text-shadow:none; }

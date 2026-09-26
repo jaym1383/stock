@@ -27,6 +27,7 @@
   const promptEl = el("prompt");
   const backBtn = el("backBtn");
   const resetBtn = el("resetBtn");
+  const syncBtn = el("syncBtn");
   const importBtn = el("importBtn");
   const importInput = el("importInput");
   const toastEl = el("toast");
@@ -76,16 +77,41 @@
   let refreshCooldownUntil = 0;
   let importCooldownUntil = 0;
   let lastNavigationAt = -Infinity;
+  let offlineMode = false;
+  let lastSnapshot = null;
+  const offlineNotice = el("offlineNotice");
+  function setOffline(value) {
+    offlineMode = value;
+    offlineNotice.hidden = !value;
+    offlineNotice.open = false;
+    const hasData = Object.keys(tree).length > 0;
+    el("offlineDescription").textContent = hasData
+      ? "กำลังใช้ข้อมูลล่าสุดในเครื่อง ไม่สามารถอัปโหลดได้ชั่วคราว"
+      : "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ และยังไม่มีข้อมูลสำรองในเครื่อง";
+    el("offlineTimestamp").textContent = lastSnapshot
+      ? "ข้อมูลล่าสุด: " + new Date(lastSnapshot.savedAt).toLocaleString("th-TH") : "";
+    el("offlineEmpty").hidden = hasData;
+    wheelWrap.hidden = !hasData;
+    promptEl.hidden = !hasData;
+    searchToggle.disabled = !hasData;
+    if (value) setImportExpanded(false);
+    updateCommandButtons();
+  }
+  document.addEventListener("pointerdown", event => { if (!offlineNotice.contains(event.target)) offlineNotice.open = false; });
+  document.addEventListener("keydown", event => { if (event.key === "Escape") offlineNotice.open = false; });
+  window.addEventListener("offline", () => setOffline(true));
 
   function updateCommandButtons() {
     const now = Date.now();
-    resetBtn.disabled = stockRequestBusy || now < refreshCooldownUntil;
-    importBtn.disabled = stockRequestBusy || now < importCooldownUntil;
+    resetBtn.disabled = stockRequestBusy;
+    syncBtn.disabled = stockRequestBusy || now < refreshCooldownUntil;
+    syncBtn.setAttribute("aria-busy", String(stockRequestBusy));
+    importBtn.disabled = offlineMode || stockRequestBusy || now < importCooldownUntil;
   }
 
   function finishCommand(button) {
     stockRequestBusy = false;
-    if (button === resetBtn) refreshCooldownUntil = Date.now() + 3000;
+    if (button === syncBtn) refreshCooldownUntil = Date.now() + 3000;
     if (button === importBtn) importCooldownUntil = Date.now() + 3000;
     updateCommandButtons();
     setTimeout(updateCommandButtons, 3000);
@@ -104,12 +130,15 @@
 
   async function loadStock(showFailureOverlay = true) {
     const startedAt = performance.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
     try {
+      if (!navigator.onLine) throw new Error("offline");
       let res = STOCK_API_BASE
-        ? await fetch(apiUrl("/api/stock"), { cache: "no-store" })
+        ? await fetch(apiUrl("/api/stock"), { cache: "no-store", signal: controller.signal })
         : null;
-      if (!res || res.status === 404) {
-        res = await fetch(`stock.xlsx?t=${Date.now()}`, { cache: "no-store" });
+      if (!res) {
+        res = await fetch(`stock.xlsx?t=${Date.now()}`, { cache: "no-store", signal: controller.signal });
       }
       if (!res.ok) throw new Error("HTTP " + res.status);
       const buf = await res.arrayBuffer();
@@ -118,6 +147,9 @@
       const nextTree = buildTree(rows);
       if (!Object.keys(nextTree).length) throw new Error("ไม่พบข้อมูล stock ที่ใช้ได้");
       tree = nextTree;
+      lastSnapshot = { tree: nextTree, savedAt: Date.now() };
+      try { await window.stockCache.write(lastSnapshot); }
+      catch (error) { console.warn("Unable to save offline stock", error); }
       renderSearchResults();
       path = [];
       dataSourceName = "stock.xlsx";
@@ -126,15 +158,21 @@
       }
       hideOverlay();
       renderLevel();
+      setOffline(false);
       return true;
     } catch (err) {
-      if (showFailureOverlay) {
-        showError(err);
-      } else {
-        showToast("โหลดข้อมูลใหม่ไม่สำเร็จ: " + (err && err.message ? err.message : String(err)), "err");
+      if (!lastSnapshot) {
+        try { lastSnapshot = await window.stockCache.read(); } catch (_) { /* Storage may be unavailable. */ }
       }
+      if (lastSnapshot?.tree && Object.keys(lastSnapshot.tree).length) tree = lastSnapshot.tree;
+      path = [];
+      closeSearch();
+      renderSearchResults();
+      renderLevel();
+      hideOverlay();
+      setOffline(true);
       return false;
-    }
+    } finally { clearTimeout(timeout); }
   }
 
   function isLocalAppServer() {
@@ -277,7 +315,7 @@
   }
 
   importBtn.addEventListener("click", () => {
-    if (stockRequestBusy || Date.now() < importCooldownUntil) return;
+    if (offlineMode || stockRequestBusy || Date.now() < importCooldownUntil) return;
     if (!importExpanded) { setImportExpanded(true); return; }
     pickerOpen = true;
     importInput.click();
@@ -301,7 +339,7 @@
     pickerOpen = false;
     setImportExpanded(false);
     importInput.value = ""; // allow re-selecting the same file again later
-    if (!file || stockRequestBusy || Date.now() < importCooldownUntil) return;
+    if (!file || offlineMode || stockRequestBusy || Date.now() < importCooldownUntil) return;
     stockRequestBusy = true;
     updateCommandButtons();
     try {
@@ -367,6 +405,9 @@
     tree = newTree;
     path = [];
     dataSourceName = file.name.replace(/\.pdf$/i, ".xlsx");
+    lastSnapshot = { tree: newTree, savedAt: Date.now() };
+    try { await window.stockCache.write(lastSnapshot); } catch (error) { console.warn("Unable to save offline stock", error); }
+    setOffline(false);
     renderSearchResults();
     hideOverlay();
     renderLevel();
@@ -1123,10 +1164,6 @@
   function updateCrumbs() {
     crumbsBox.innerHTML = "";
     if (path.length === 0) {
-      const c = document.createElement("span");
-      c.className = "crumb crumb--active";
-      c.textContent = "เริ่มต้น";
-      crumbsBox.appendChild(c);
       return;
     }
     path.forEach((p, i) => {
@@ -1343,19 +1380,23 @@
     renderLevel();
   });
 
-  resetBtn.addEventListener("click", async () => {
+  resetBtn.addEventListener("click", () => {
+    if (!allowNavigation()) return;
+    closeSearch();
+    path = [];
+    renderLevel();
+  });
+
+  syncBtn.addEventListener("click", async () => {
     if (stockRequestBusy || Date.now() < refreshCooldownUntil) return;
     stockRequestBusy = true;
     updateCommandButtons();
+    closeSearch();
     path = [];
     try {
-      if (await loadStock(false)) {
-        showToast("โหลดข้อมูลสต็อกล่าสุดแล้ว", "ok");
-      } else {
-        renderLevel();
-      }
+      if (await loadStock(false)) showToast("โหลดข้อมูลสต็อกล่าสุดแล้ว", "ok");
     } finally {
-      finishCommand(resetBtn);
+      finishCommand(syncBtn);
     }
   });
 

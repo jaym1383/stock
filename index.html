@@ -6,7 +6,7 @@
 <title>Jaymart Stock</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=14">
+<link rel="stylesheet" href="style.css?v=15">
 <link rel="manifest" href="manifest.json?v=13">
 <meta name="theme-color" content="#a00000">
 <link rel="icon" href="icons/icon-192-centered.png">
@@ -30,6 +30,9 @@
       <span class="hud-brand-subtitle">STOCK</span>
     </div>
     <nav id="crumbs" class="crumbs" aria-label="เส้นทางที่เลือก"></nav>
+  </header>
+  <div class="search-toolbar">
+    <details id="offlineNotice" hidden><summary>Offline mode</summary><div class="offline-details"><p id="offlineDescription"></p><small id="offlineTimestamp"></small></div></details>
     <button class="search-toggle" id="searchToggle" type="button" aria-label="ค้นหารุ่นสินค้า" aria-expanded="false" aria-controls="searchPanel" title="ค้นหารุ่นสินค้า">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16 16 5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     </button>
@@ -38,10 +41,11 @@
       <input id="searchInput" type="search" placeholder="พิมพ์ชื่อรุ่น..." autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-controls="searchResults" aria-expanded="false">
       <div class="search-results" id="searchResults" role="listbox"></div>
     </div>
-  </header>
+  </div>
 
   <!-- main wheel stage -->
   <main class="stage">
+    <p id="offlineEmpty" hidden>ยังไม่มีข้อมูลในเครื่อง กรุณาเชื่อมต่อแล้วกด Sync เพื่อโหลดข้อมูลครั้งแรก</p>
     <div id="pointerReadout" class="pointer-readout" aria-live="polite" aria-atomic="true"></div>
     <div class="wheel-wrap" id="wheelWrap">
       <svg id="wheel" viewBox="0 0 400 400" aria-hidden="true"></svg>
@@ -78,8 +82,13 @@
     </button>
     <button class="ctrl-btn ctrl-btn--ghost" id="resetBtn">
       <svg viewBox="0 0 24 24"><path d="M12 4V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-8z" fill="currentColor"/></svg>
-      <span>เริ่มใหม่</span>
+      <span>หน้าแรก</span>
     </button>
+    <div class="import-control" id="syncControl">
+    <button class="ctrl-btn ctrl-btn--ghost" id="syncBtn" type="button" title="Syncข้อมูล" aria-label="Syncข้อมูล">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M8 16H3v5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    </div>
     <div class="import-control" id="importControl">
       <button class="ctrl-btn ctrl-btn--ghost" id="importBtn" type="button" aria-label="นำเข้าข้อมูล" aria-expanded="false">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -113,16 +122,11 @@
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/animejs@3.2.2/lib/anime.min.js"></script>
-<script>document.documentElement.dataset.tileMotion = "true";</script>
-<script src="app.js?v=14"></script>
+<script>document.documentElement.dataset.previewTileMotion = "true";</script>
+<script src="stock-cache.js?v=15"></script>
+<script src="app.js?v=15"></script>
 <script>
-  if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("service-worker.js").catch((err) => {
-        console.warn("Service worker registration failed:", err);
-      });
-    });
-  }
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js').catch(console.warn));
 </script>
 </body>
 </html>
