@@ -66,6 +66,7 @@
   /** active pointer-drag session on the center hub, or null */
   let dragState = null;
   let hubReturning = false;
+  let suppressTileClickUntil = 0;
   /** svg-space point ({x,y}) the *next* buildRing() should expand out from —
    *  set right before a drag-triggered selection, consumed once and cleared;
    *  null means "use the wheel's resting center" (the default look) */
@@ -545,11 +546,20 @@
       g.style.transformBox = "view-box";
       g.style.transformOrigin = origin.x.toFixed(2) + "px " + origin.y.toFixed(2) + "px";
       g.style.opacity = "0";
+      const visual = document.createElementNS(SVG_NS, "g");
+      const orbit = document.createElementNS(SVG_NS, "g");
+      orbit.setAttribute("class", "tile-orbit");
+      g.appendChild(orbit);
+      visual.setAttribute("class", "tile-visual");
+      const tileCenter = polar(CX, CY, ARM_RADIUS, mid);
+      visual.style.transformBox = "view-box";
+      visual.style.transformOrigin = `${tileCenter.x}px ${tileCenter.y}px`;
+      orbit.appendChild(visual);
 
       const segPath = document.createElementNS(SVG_NS, "path");
       segPath.setAttribute("d", donutPath(start, end));
       segPath.setAttribute("class", "segment");
-      g.appendChild(segPath);
+      visual.appendChild(segPath);
 
       const box = labelBox(mid);
       const fo = document.createElementNS(SVG_NS, "foreignObject");
@@ -565,10 +575,11 @@
       wrapper.style.setProperty("--label-width", n > 6 ? "88px" : "110px");
       wrapper.innerHTML = renderLabelContent(item);
       fo.appendChild(wrapper);
-      g.appendChild(fo);
+      visual.appendChild(fo);
 
       const activate = (ev) => {
         ev.preventDefault();
+        if (dragState || performance.now() < suppressTileClickUntil) return;
         pickValue(item.value);
       };
       g.addEventListener("click", activate);
@@ -577,7 +588,7 @@
       wheelSvg.appendChild(g);
       groups.push(g);
 
-      currentSegmentsMeta.push({ value: item.value, rangeStart, rangeEnd, group: g });
+      currentSegmentsMeta.push({ value: item.value, label: item.label, rangeStart: start, rangeEnd: end, group: g, orbit, visual, tileCenter });
     });
 
     anime({
@@ -755,13 +766,25 @@
   });
 
   // ---------------------------------------------------------------
-  // Reaching a segment consumes one drag; the next selection needs a new press.
+  // Hover uses the original sector geometry even while other tiles shrink.
   // ---------------------------------------------------------------
 
-  function setArmed(segMeta) {
+  function setArmed(segMeta, focus = 0) {
+    const selectedIndex = currentSegmentsMeta.indexOf(segMeta);
+    const active = selectedIndex >= 0;
+    if (active && wheelSvg.lastElementChild !== segMeta.group) {
+      wheelSvg.appendChild(segMeta.group);
+    }
     currentSegmentsMeta.forEach((s) => {
       if (s.group) s.group.classList.toggle("seg-armed", s === segMeta);
+      s.orbit.style.transform = "rotate(0deg)";
+      s.visual.style.transform = `scale(${active && s === segMeta ? 1.16 : 1})`;
+      s.visual.style.opacity = String(active && s !== segMeta ? .62 : 1);
     });
+    const readout = el("pointerReadout");
+    readout.textContent = segMeta ? segMeta.label : "";
+    readout.classList.toggle("pointer-readout--visible", !!segMeta);
+    readout.style.fontSize = `${Math.max(17, 29 - Math.max(0, String(segMeta?.label || "").length - 15) * .45)}px`;
   }
 
   function onHubPointerDown(ev) {
@@ -771,39 +794,54 @@
     const rect = wheelWrap.getBoundingClientRect();
     dragState = {
       pointerId: ev.pointerId,
-      startX: ev.clientX,
-      startY: ev.clientY,
+      startX: rect.left + rect.width / 2,
+      startY: rect.top + rect.height / 2,
+      lastX: 0,
+      lastY: 0,
+      pointed: null,
       scale: 400 / rect.width // svg units per screen px (wheel is a square)
     };
     anime.remove(hub);
+    anime.remove(currentSegmentsMeta.map((s) => s.group));
+    anime.set(currentSegmentsMeta.map((s) => s.group), { scale: 1, opacity: 1 });
+    anime.set(hub, { translateX: ev.clientX - dragState.startX, translateY: ev.clientY - dragState.startY, scale: .256 });
     hub.classList.add("hub--dragging");
+    wheelWrap.classList.add("pointer-active");
   }
 
   function onHubPointerMove(ev) {
     if (!dragState || ev.pointerId !== dragState.pointerId) return;
 
-    let dxPx = ev.clientX - dragState.startX;
-    let dyPx = ev.clientY - dragState.startY;
-    const maxSvgR = R_OUTER - 20;
-    const maxPxR = maxSvgR / dragState.scale;
-    const distPx = Math.hypot(dxPx, dyPx);
-    if (distPx > maxPxR) {
-      const k = maxPxR / distPx;
-      dxPx *= k;
-      dyPx *= k;
+    ev.preventDefault();
+    const dxPx = ev.clientX - dragState.startX;
+    const dyPx = ev.clientY - dragState.startY;
+    anime.set(hub, { translateX: dxPx, translateY: dyPx, scale: .256 });
+    const targetX = dxPx * dragState.scale;
+    const targetY = dyPx * dragState.scale;
+    const fromX = dragState.lastX, fromY = dragState.lastY;
+    const steps = Math.max(1, Math.ceil(Math.hypot(targetX - fromX, targetY - fromY) / 8));
+    for (let step = 1; step <= steps && dragState; step++) {
+      const dx = fromX + (targetX - fromX) * step / steps;
+      const dy = fromY + (targetY - fromY) * step / steps;
+      const radius = Math.hypot(dx, dy);
+      const angle = angleFromDelta(dx, dy);
+      const tile = currentSegmentsMeta.find((s) => angle >= s.rangeStart && angle < s.rangeEnd) || null;
+      if (radius >= R_INNER && radius <= R_OUTER) {
+        dragState.pointed = tile;
+        setArmed(tile, tile ? 1 : 0);
+        if (tile && radius >= R_INNER + (R_OUTER - R_INNER) * .75) {
+          commitDragSelection(tile);
+        }
+      } else if (radius < R_INNER || !tile) {
+        dragState.pointed = null;
+        setArmed(null);
+      } else if (tile && tile === dragState.pointed) {
+        commitDragSelection(tile);
+      } else {
+        setArmed(tile === dragState.pointed ? tile : null);
+      }
     }
-
-    anime.set(hub, { translateX: dxPx, translateY: dyPx });
-
-    const dxSvg = dxPx * dragState.scale;
-    const dySvg = dyPx * dragState.scale;
-    const radiusSvg = Math.hypot(dxSvg, dySvg);
-
-    if (radiusSvg >= ARM_RADIUS) {
-      const angleDeg = angleFromDelta(dxSvg, dySvg);
-      const armed = currentSegmentsMeta.find((s) => angleDeg >= s.rangeStart && angleDeg < s.rangeEnd) || null;
-      if (armed) commitDragSelection(armed);
-    }
+    if (dragState) { dragState.lastX = targetX; dragState.lastY = targetY; }
   }
 
   function commitDragSelection(segMeta) {
@@ -814,10 +852,12 @@
   }
 
   function releaseHub() {
+    suppressTileClickUntil = performance.now() + 400;
     const pointerId = dragState && dragState.pointerId;
     dragState = null;
     if (pointerId != null && hub.hasPointerCapture(pointerId)) hub.releasePointerCapture(pointerId);
     hub.classList.remove("hub--dragging");
+    wheelWrap.classList.remove("pointer-active");
     setArmed(null);
     hubReturning = true;
     anime.remove(hub);
@@ -825,6 +865,7 @@
       targets: hub,
       translateX: 0,
       translateY: 0,
+      scale: 1,
       duration: 320,
       easing: "easeOutCubic",
       complete: () => { hubReturning = false; }
@@ -833,7 +874,14 @@
 
   function onHubPointerUp(ev) {
     if (!dragState || ev.pointerId !== dragState.pointerId) return;
-    releaseHub();
+    onHubPointerMove(ev);
+    if (!dragState) return;
+    const radius = Math.hypot(dragState.lastX, dragState.lastY);
+    if (dragState.pointed && radius >= R_INNER && radius <= R_OUTER + 20) {
+      commitDragSelection(dragState.pointed);
+    } else {
+      releaseHub();
+    }
   }
 
   function onHubPointerCancel(ev) {

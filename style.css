@@ -802,6 +802,41 @@ body{
 }
 .hub-inner{ position:relative; z-index:1; }
 .hub-sub:empty{ display:none; }
+.tile-orbit{ transform-box:view-box; transform-origin:200px 200px; transition:transform .34s cubic-bezier(.2,.75,.25,1); }
+.tile-visual{ transition:transform .24s ease-out,opacity .2s ease-out; }
+.seg-group.seg-armed .tile-visual{ opacity:1; animation:tile-point-bounce .62s both; transition:none; }
+@keyframes tile-point-bounce{
+  0%{ transform:scale(1); }
+  38%{ transform:scale(1.25); }
+  65%{ transform:scale(1.10); }
+  83%{ transform:scale(1.19); }
+  100%{ transform:scale(1.16); }
+}
+.wheel-wrap.pointer-active::before{ opacity:.28; }
+.seg-group.seg-armed .segment{ fill:#ffe5e5; fill-opacity:1; opacity:1; stroke:#a00000; filter:drop-shadow(0 3px 7px rgba(160,0,0,.28)); }
+.seg-label-name{ transition:font-size .2s ease-out,transform .26s cubic-bezier(.2,.8,.3,1.2),text-shadow .2s ease-out; }
+.seg-group.seg-armed foreignObject{ overflow:visible; }
+.seg-group.seg-armed .seg-label-name{
+  font-size:calc(var(--label-size, 18px) * 1.55);
+  font-weight:800;
+  line-height:1.05;
+  color:#850000;
+  transform:translateY(-4px);
+  text-shadow:0 2px 0 #fff,0 4px 9px rgba(120,0,0,.2);
+}
+@media (prefers-reduced-motion:reduce){ .seg-label-name{ transition:none; } }
+.pointer-readout{ position:absolute; top:10px; left:50%; transform:translateX(-50%); width:calc(100% - 24px); max-width:600px; min-height:42px; text-align:center; font-weight:700; line-height:1.15; color:#a00000; overflow-wrap:anywhere; opacity:0; pointer-events:none; z-index:6; }
+.pointer-readout--visible{ opacity:1; }
+.stage:not(.stage--result){ padding-top:62px; }
+.wheel-wrap:not(.wheel-wrap--result){ width:min(88vw, calc(100dvh - 330px), 460px); }
+.hub.hub--dragging{ opacity:.35; border-width:4px; background:#fff; }
+.hub.hub--dragging .hub-inner{ visibility:hidden; }
+.hub.hub--dragging::before{ visibility:visible; opacity:1; }
+@media (prefers-reduced-motion:reduce){ .tile-visual,.tile-orbit,.seg-group.seg-armed .tile-visual{ transition:none; animation:none; } }
+/* Explicit tile feedback; other reduced-motion preferences remain intact. */
+@media (prefers-reduced-motion:reduce){
+  html[data-tile-motion="true"] .seg-group.seg-armed .tile-visual{ animation:tile-point-bounce .62s both; }
+}
 .hub.hub--dragging{ box-shadow:inset 0 0 0 5px #f8eded,0 0 0 5px rgba(160,0,0,.16); }
 .hub-title{ color:#a00000; text-shadow:none; }
 .hub-sub{ color:#70757a; }
