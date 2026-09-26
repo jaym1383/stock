@@ -65,6 +65,7 @@
   let currentSegmentsMeta = [];
   /** active pointer-drag session on the center hub, or null */
   let dragState = null;
+  let hubReturning = false;
   /** svg-space point ({x,y}) the *next* buildRing() should expand out from —
    *  set right before a drag-triggered selection, consumed once and cleared;
    *  null means "use the wheel's resting center" (the default look) */
@@ -460,15 +461,23 @@
 
   function donutPath(startAngle, endAngle) {
     const large = endAngle - startAngle <= 180 ? 0 : 1;
-    const oStart = polar(CX, CY, R_OUTER, endAngle);
-    const oEnd = polar(CX, CY, R_OUTER, startAngle);
-    const iStart = polar(CX, CY, R_INNER, endAngle);
-    const iEnd = polar(CX, CY, R_INNER, startAngle);
+    const corner = 7;
+    const outerInset = Math.asin(corner / R_OUTER) * 180 / Math.PI;
+    const innerInset = Math.asin(corner / R_INNER) * 180 / Math.PI;
+    const point = (radius, angle) => {
+      const p = polar(CX, CY, radius, angle);
+      return `${p.x.toFixed(2)} ${p.y.toFixed(2)}`;
+    };
     return [
-      "M", oStart.x.toFixed(2), oStart.y.toFixed(2),
-      "A", R_OUTER, R_OUTER, 0, large, 0, oEnd.x.toFixed(2), oEnd.y.toFixed(2),
-      "L", iEnd.x.toFixed(2), iEnd.y.toFixed(2),
-      "A", R_INNER, R_INNER, 0, large, 1, iStart.x.toFixed(2), iStart.y.toFixed(2),
+      "M", point(R_OUTER, startAngle + outerInset),
+      "A", R_OUTER, R_OUTER, 0, large, 1, point(R_OUTER, endAngle - outerInset),
+      "Q", point(R_OUTER, endAngle), point(R_OUTER - corner, endAngle),
+      "L", point(R_INNER + corner, endAngle),
+      "Q", point(R_INNER, endAngle), point(R_INNER, endAngle - innerInset),
+      "A", R_INNER, R_INNER, 0, large, 0, point(R_INNER, startAngle + innerInset),
+      "Q", point(R_INNER, startAngle), point(R_INNER + corner, startAngle),
+      "L", point(R_OUTER - corner, startAngle),
+      "Q", point(R_OUTER, startAngle), point(R_OUTER, startAngle + outerInset),
       "Z"
     ].join(" ");
   }
@@ -492,6 +501,19 @@
   function buildRing(items) {
     clearSvg();
     currentSegmentsMeta = [];
+    const defs = document.createElementNS(SVG_NS, "defs");
+    const surface = document.createElementNS(SVG_NS, "linearGradient");
+    surface.setAttribute("id", "tileSurface");
+    surface.setAttribute("x2", "0");
+    surface.setAttribute("y2", "1");
+    for (const [offset, color] of [["0%", "#ffffff"], ["100%", "#e7e7e7"]]) {
+      const stop = document.createElementNS(SVG_NS, "stop");
+      stop.setAttribute("offset", offset);
+      stop.setAttribute("stop-color", color);
+      surface.appendChild(stop);
+    }
+    defs.appendChild(surface);
+    wheelSvg.appendChild(defs);
 
     // where this ring's entrance animation bursts outward from: wherever the
     // finger currently is mid-drag, or the wheel's resting center otherwise.
@@ -733,8 +755,7 @@
   });
 
   // ---------------------------------------------------------------
-  // Draggable center hub — drag it out to a category/segment; releasing
-  // once it reaches that segment's ring counts as selecting it.
+  // Reaching a segment consumes one drag; the next selection needs a new press.
   // ---------------------------------------------------------------
 
   function setArmed(segMeta) {
@@ -744,7 +765,7 @@
   }
 
   function onHubPointerDown(ev) {
-    if (currentSegmentsMeta.length === 0) return;
+    if (currentSegmentsMeta.length === 0 || dragState || hubReturning || !ev.isPrimary || ev.button !== 0) return;
     ev.preventDefault();
     try { hub.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
     const rect = wheelWrap.getBoundingClientRect();
@@ -781,53 +802,32 @@
     if (radiusSvg >= ARM_RADIUS) {
       const angleDeg = angleFromDelta(dxSvg, dySvg);
       const armed = currentSegmentsMeta.find((s) => angleDeg >= s.rangeStart && angleDeg < s.rangeEnd) || null;
-      // Reaching a category selects it immediately — the user never has to
-      // release the button. commitDragSelection() re-anchors the drag origin
-      // to the current finger position afterwards, so the distance below
-      // resets to ~0 next frame; that's what stops a steady hold from firing
-      // the same selection over and over (no rapid-click retriggering).
-      if (armed) commitDragSelection(armed, dxSvg, dySvg, ev);
+      if (armed) commitDragSelection(armed);
     }
   }
 
-  function commitDragSelection(segMeta, dxSvg, dySvg, ev) {
-    // snap the hub back instantly (no elastic bounce mid-gesture) and clear
-    // any hover highlight before the ring swaps out from under it
-    anime.remove(hub);
-    anime.set(hub, { translateX: 0, translateY: 0 });
-    setArmed(null);
-
-    // the next ring should visually burst outward from right where the
-    // finger currently is, not from the wheel's static center
-    ringOriginPoint = { x: CX + dxSvg, y: CY + dySvg };
-
+  function commitDragSelection(segMeta) {
+    // Consume this gesture before changing the menu; held pointers cannot select again.
+    releaseHub();
+    ringOriginPoint = null;
     pickValue(segMeta.value);
-
-    const reachedEnd = currentSegmentsMeta.length === 0; // leaf result or dead end
-    if (reachedEnd) {
-      try { hub.releasePointerCapture(dragState.pointerId); } catch (e) { /* ignore */ }
-      hub.classList.remove("hub--dragging");
-      dragState = null;
-      return;
-    }
-
-    // keep the drag alive so the user can carry straight into the next ring
-    // without lifting their finger — a fresh, deliberate push past
-    // ARM_RADIUS is required for every level, by design.
-    dragState.startX = ev.clientX;
-    dragState.startY = ev.clientY;
   }
 
   function releaseHub() {
+    const pointerId = dragState && dragState.pointerId;
+    dragState = null;
+    if (pointerId != null && hub.hasPointerCapture(pointerId)) hub.releasePointerCapture(pointerId);
     hub.classList.remove("hub--dragging");
     setArmed(null);
-    dragState = null;
+    hubReturning = true;
+    anime.remove(hub);
     anime({
       targets: hub,
       translateX: 0,
       translateY: 0,
-      duration: 560,
-      easing: "easeOutElastic(1, .55)"
+      duration: 320,
+      easing: "easeOutCubic",
+      complete: () => { hubReturning = false; }
     });
   }
 
@@ -845,6 +845,9 @@
   hub.addEventListener("pointermove", onHubPointerMove);
   hub.addEventListener("pointerup", onHubPointerUp);
   hub.addEventListener("pointercancel", onHubPointerCancel);
+  hub.addEventListener("lostpointercapture", (ev) => {
+    if (dragState && ev.pointerId === dragState.pointerId) releaseHub();
+  });
 
   // ---------------------------------------------------------------
   // Level flow

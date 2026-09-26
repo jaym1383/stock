@@ -753,6 +753,9 @@ body{
 /* Jaymart daytime theme */
 .hud-top{ background:#a00000; color:#fff; padding:12px 16px 10px; }
 .hud-brand,.hud-brand span{ color:#fff; }
+.hud-brand{ display:flex; flex-direction:column; align-items:center; gap:3px; letter-spacing:0; }
+.hud-wordmark{ display:block; width:210px; max-width:100%; height:42px; }
+.hud-brand .hud-brand-subtitle{ margin:0; font:700 10px/12px system-ui,sans-serif; letter-spacing:0; }
 .search-toggle{ background:#fff; border-color:#fff; color:#a00000; }
 .search-toggle:hover,.search-toggle[aria-expanded="true"]{ background:#f7e5e5; border-color:#fff; }
 .search-panel{ background:#fff; border-color:#d3d3d3; box-shadow:0 16px 32px rgba(48,52,56,.18); color:var(--ink); }
@@ -775,7 +778,7 @@ body{
   pointer-events:none;
 }
 .wheel-wrap--result::before,.wheel-hidden-for-grid::before{ display:none; }
-.segment{ fill:#f0f0f0; stroke:#a00000; stroke-width:2.25; }
+.segment{ fill:url(#tileSurface); stroke:#a00000; stroke-width:1.6; stroke-linejoin:round; filter:drop-shadow(0 2px 2px rgba(48,52,56,.12)); }
 .segment:hover,.segment:active,.seg-group.seg-armed .segment{ fill:#e6c9c9; stroke:#a00000; }
 .segment-ring{ stroke:#d3d3d3; }
 .seg-label{ padding:3px; }

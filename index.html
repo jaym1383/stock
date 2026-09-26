@@ -6,8 +6,8 @@
 <title>Jaymart Stock</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=12">
-<link rel="manifest" href="manifest.json?v=12">
+<link rel="stylesheet" href="style.css?v=13">
+<link rel="manifest" href="manifest.json?v=13">
 <meta name="theme-color" content="#a00000">
 <link rel="icon" href="icons/icon-192-centered.png">
 <link rel="apple-touch-icon" href="icons/icon-192-centered.png">
@@ -18,7 +18,17 @@
 
   <!-- top HUD: breadcrumb trail -->
   <header class="hud-top">
-    <div class="hud-brand">Jaymart <span>Stock</span></div>
+    <div class="hud-brand" aria-label="Jaymart Stock">
+      <svg class="hud-wordmark" viewBox="340 348 600 120" role="img" aria-label="Jaymart">
+        <defs>
+          <filter id="whiteWordmark" color-interpolation-filters="sRGB">
+            <feColorMatrix type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0.6667 0.6667 0.6667 0 -1"/>
+          </filter>
+        </defs>
+        <image href="icons/jaymart-header-reference.jpg" width="1280" height="816" filter="url(#whiteWordmark)"/>
+      </svg>
+      <span class="hud-brand-subtitle">STOCK</span>
+    </div>
     <nav id="crumbs" class="crumbs" aria-label="เส้นทางที่เลือก"></nav>
     <button class="search-toggle" id="searchToggle" type="button" aria-label="ค้นหารุ่นสินค้า" aria-expanded="false" aria-controls="searchPanel" title="ค้นหารุ่นสินค้า">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16 16 5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -102,7 +112,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/animejs@3.2.2/lib/anime.min.js"></script>
-<script src="app.js?v=12"></script>
+<script src="app.js?v=13"></script>
 <script>
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
