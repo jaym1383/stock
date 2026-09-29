@@ -140,6 +140,7 @@
   // ---------------------------------------------------------------
 
   async function loadStock(showFailureOverlay = true) {
+    exitSelectionMode();
     const startedAt = performance.now();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
@@ -353,6 +354,7 @@
     setImportExpanded(false);
     importInput.value = ""; // allow re-selecting the same file again later
     if (!file || offlineMode || stockRequestBusy || Date.now() < importCooldownUntil) return;
+    exitSelectionMode();
     stockRequestBusy = true;
     updateCommandButtons();
     try {
@@ -1428,6 +1430,7 @@
   }
 
   function toggleSelectedPath(targetPath) {
+    if (stockRequestBusy) return;
     const enteringMode = !selectionMode;
     selectionMode = true;
     const key = JSON.stringify(targetPath);
