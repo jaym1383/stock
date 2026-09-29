@@ -1619,6 +1619,7 @@
 
   backBtn.addEventListener("click", () => {
     if (path.length === 0 || !allowNavigation()) return;
+    exitSelectionMode();
     path.pop();
     renderLevel();
   });
@@ -1633,6 +1634,7 @@
 
   syncBtn.addEventListener("click", async () => {
     if (stockRequestBusy || Date.now() < refreshCooldownUntil) return;
+    exitSelectionMode();
     stockRequestBusy = true;
     updateCommandButtons();
     closeSearch();
