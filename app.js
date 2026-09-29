@@ -49,6 +49,17 @@
   const importCollapse = el("importCollapse");
   const codeOverlay = el("codeOverlay");
   const expandedItemCode = el("expandedItemCode");
+  const selectionOpen = el("selectionOpen");
+  const selectionExit = el("selectionExit");
+  const selectionCount = el("selectionCount");
+  const selectionModal = el("selectionModal");
+  const selectionList = el("selectionList");
+  const selectionText = el("selectionText");
+  const includeQuantity = el("includeQuantity");
+  const selectionCopy = el("selectionCopy");
+  const selectedPaths = new Map();
+  const excludedLeaves = new Set();
+  let selectionMode = false;
   let searchMatches = [];
   let searchActive = -1;
   let pendingOverviewState = null;
@@ -147,6 +158,7 @@
       const nextTree = buildTree(rows);
       if (!Object.keys(nextTree).length) throw new Error("ไม่พบข้อมูล stock ที่ใช้ได้");
       tree = nextTree;
+      reconcileSelection();
       lastSnapshot = { tree: nextTree, savedAt: Date.now() };
       try { await window.stockCache.write(lastSnapshot); }
       catch (error) { console.warn("Unable to save offline stock", error); }
@@ -165,6 +177,7 @@
         try { lastSnapshot = await window.stockCache.read(); } catch (_) { /* Storage may be unavailable. */ }
       }
       if (lastSnapshot?.tree && Object.keys(lastSnapshot.tree).length) tree = lastSnapshot.tree;
+      reconcileSelection();
       path = [];
       closeSearch();
       renderSearchResults();
@@ -403,6 +416,7 @@
       throw new Error("แปลง PDF สำเร็จ แต่ไม่พบข้อมูล stock ที่ใช้ได้");
     }
     tree = newTree;
+    reconcileSelection();
     path = [];
     dataSourceName = file.name.replace(/\.pdf$/i, ".xlsx");
     lastSnapshot = { tree: newTree, savedAt: Date.now() };
@@ -584,6 +598,8 @@
 
       const g = document.createElementNS(SVG_NS, "g");
       g.setAttribute("class", "seg-group");
+      g.dataset.selectionPath = JSON.stringify([...path, item.value]);
+      if (selectedPaths.has(JSON.stringify([...path, item.value]))) g.classList.add("seg-selected");
       g.style.transformBox = "view-box";
       g.style.transformOrigin = origin.x.toFixed(2) + "px " + origin.y.toFixed(2) + "px";
       g.style.opacity = "0";
@@ -620,10 +636,13 @@
 
       const activate = (ev) => {
         ev.preventDefault();
+        if (g.dataset.longPressConsumed === "true") { g.dataset.longPressConsumed = "false"; return; }
         if (dragState || performance.now() < suppressTileClickUntil) return;
+        if (selectionMode) { toggleSelectedPath([...path, item.value]); return; }
         pickValue(item.value);
       };
       g.addEventListener("click", activate);
+      bindLongPress(g, [...path, item.value]);
       g.style.cursor = "pointer";
 
       wheelSvg.appendChild(g);
@@ -1046,6 +1065,8 @@
     items.forEach((item, index) => {
       const card = document.createElement("button");
       card.className = "product-grid-card";
+      card.dataset.selectionPath = JSON.stringify([...path, item.value]);
+      if (selectedPaths.has(JSON.stringify([...path, item.value]))) card.classList.add("is-selected");
       card.type = "button";
       card.style.setProperty("--grid-i", index);
       const initial = Array.from(item.label.trim()).find((char) => /[\p{L}\p{N}]/u.test(char)) || "#";
@@ -1061,8 +1082,11 @@
       `;
       card.addEventListener("click", (ev) => {
         ev.preventDefault();
+        if (card.dataset.longPressConsumed === "true") { card.dataset.longPressConsumed = "false"; return; }
+        if (selectionMode) { toggleSelectedPath([...path, item.value]); return; }
         pickValue(item.value);
       });
+      bindLongPress(card, [...path, item.value]);
       productGridItems.appendChild(card);
     });
 
@@ -1331,6 +1355,7 @@
         <div class="result-eyebrow">${escapeHtml(path[0])} · ${escapeHtml(path[2])}</div>
         <div class="result-model">${escapeHtml(path[1])}</div>
         <a class="result-action-btn" href="${escapeHtml(imageSearchUrl)}" target="_blank" rel="noopener noreferrer">ดูรูป</a>
+        <button class="result-select-btn" type="button">เพิ่มในรายการ</button>
         ${itemCode ? `<div class="result-code-section"><button class="result-item-code" type="button" aria-label="ขยายรหัสสินค้า">${escapeHtml(itemCode)}</button><button class="code-zoom-btn" type="button" aria-label="ขยายรหัสสินค้า" title="ขยายรหัสสินค้า"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16 16 5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div>` : ""}
       </div>
       <div class="result-body">
@@ -1351,6 +1376,9 @@
     stage.classList.add("stage--result");
     wheelWrap.classList.add("wheel-wrap--result");
     renderOverview(card, overviewState);
+    const resultSelect = card.querySelector(".result-select-btn");
+    resultSelect.addEventListener("click", () => toggleSelectedPath([...path]));
+    resultSelect.textContent = selectedPaths.has(JSON.stringify(path)) ? "เอาออกจากรายการ" : "เพิ่มในรายการ";
 
     const codeButton = card.querySelector(".result-item-code");
     if (codeButton) {
@@ -1373,6 +1401,221 @@
   // ---------------------------------------------------------------
   // Controls
   // ---------------------------------------------------------------
+
+  function bindLongPress(element, targetPath) {
+    let timer = null, startX = 0, startY = 0;
+    element.addEventListener("pointerdown", (event) => {
+      if (!event.isPrimary || event.button !== 0) return;
+      if (selectionMode) return;
+      startX = event.clientX; startY = event.clientY;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        element.dataset.longPressConsumed = "true";
+        toggleSelectedPath(targetPath);
+        if (navigator.vibrate) navigator.vibrate(25);
+      }, 500);
+    });
+    element.addEventListener("pointermove", (event) => {
+      if (Math.hypot(event.clientX - startX, event.clientY - startY) > 12) clearTimeout(timer);
+    });
+    ["pointerup", "pointercancel", "pointerleave"].forEach((name) => element.addEventListener(name, () => clearTimeout(timer)));
+    element.addEventListener("pointerup", () => {
+      // Keep suppression for the entire hold, then consume its release click.
+      setTimeout(() => { element.dataset.longPressConsumed = "false"; }, 400);
+    });
+    element.addEventListener("pointercancel", () => { element.dataset.longPressConsumed = "false"; });
+    element.addEventListener("contextmenu", (event) => event.preventDefault());
+  }
+
+  function toggleSelectedPath(targetPath) {
+    const enteringMode = !selectionMode;
+    selectionMode = true;
+    const key = JSON.stringify(targetPath);
+    if (selectedPaths.has(key)) selectedPaths.delete(key);
+    else selectedPaths.set(key, targetPath);
+    if (selectedPaths.size === 0) { exitSelectionMode(); return; }
+    updateSelectionButton();
+    if (enteringMode) showToast("โหมดเลือก: แตะรายการเพื่อเลือกหรือยกเลิก", "ok");
+    document.querySelectorAll("[data-selection-path]").forEach((element) => {
+      const active = selectedPaths.has(element.dataset.selectionPath);
+      element.classList.toggle("seg-selected", active && element.classList.contains("seg-group"));
+      element.classList.toggle("is-selected", active && element.classList.contains("product-grid-card"));
+    });
+    const resultSelect = document.querySelector(".result-select-btn");
+    if (resultSelect) resultSelect.textContent = selectedPaths.has(JSON.stringify(path)) ? "เอาออกจากรายการ" : "เพิ่มในรายการ";
+    showToast(selectedPaths.has(key) ? "เพิ่มในรายการที่เลือกแล้ว" : "เอาออกจากรายการแล้ว", "ok");
+  }
+
+  function updateSelectionButton() {
+    selectionOpen.hidden = !selectionMode;
+    selectionExit.hidden = !selectionMode;
+    selectionCount.textContent = String(selectedPaths.size);
+  }
+
+  function exitSelectionMode() {
+    const modalWasOpen = !selectionModal.hidden;
+    selectedPaths.clear();
+    excludedLeaves.clear();
+    selectionMode = false;
+    selectionModal.hidden = true;
+    updateSelectionButton();
+    document.querySelectorAll(".seg-selected,.product-grid-card.is-selected").forEach((element) => {
+      element.classList.remove("seg-selected", "is-selected");
+    });
+    const resultSelect = document.querySelector(".result-select-btn");
+    if (resultSelect) resultSelect.textContent = "เพิ่มในรายการ";
+    if (modalWasOpen) searchToggle.focus();
+  }
+
+  function selectedLeaves() {
+    const leaves = new Map();
+    const visit = (parts, node) => {
+      if (!node) return;
+      if (parts.length === 4) {
+        if (getTotalQty(node) > 0) leaves.set(JSON.stringify(parts), { parts, qty: getTotalQty(node) });
+        return;
+      }
+      Object.entries(node).forEach(([key, child]) => visit([...parts, key], child));
+    };
+    selectedPaths.forEach((parts) => visit(parts, resolve(parts)));
+    return Array.from(leaves.values()).sort((a, b) => a.parts.join("\u0000").localeCompare(b.parts.join("\u0000"), "th"));
+  }
+
+  function previewText(leaves) {
+    const included = leaves.filter((leaf) => !excludedLeaves.has(JSON.stringify(leaf.parts)));
+    const groups = new Map();
+    included.forEach(({ parts: [category, model, storage, color], qty }) => {
+      if (!groups.has(category)) groups.set(category, new Map());
+      const models = groups.get(category);
+      if (!models.has(model)) models.set(model, new Map());
+      const storages = models.get(model);
+      if (!storages.has(storage)) storages.set(storage, []);
+      storages.get(storage).push(includeQuantity.checked ? `${color} (${qty})` : color);
+    });
+    const lines = ["สินค้าที่มีสต็อก"];
+    groups.forEach((models, category) => {
+      lines.push("", category);
+      models.forEach((storages, model) => {
+        lines.push(model);
+        storages.forEach((colors, storage) => lines.push(`- ${storage}: ${colors.join(", ")}`));
+        lines.push("");
+      });
+    });
+    return included.length ? lines.join("\n").trim() : "";
+  }
+
+  function renderSelectionDialog() {
+    const leaves = selectedLeaves();
+    if (!leaves.some(leaf => !excludedLeaves.has(JSON.stringify(leaf.parts)))) {
+      exitSelectionMode();
+      return;
+    }
+    selectionList.replaceChildren();
+    const categories = new Map();
+    leaves.forEach((leaf) => {
+      const [category, model, storage] = leaf.parts;
+      if (!categories.has(category)) categories.set(category, new Map());
+      const models = categories.get(category);
+      if (!models.has(model)) models.set(model, new Map());
+      const storages = models.get(model);
+      if (!storages.has(storage)) storages.set(storage, []);
+      storages.get(storage).push(leaf);
+    });
+    const checkbox = (name, subset, className) => {
+      const label = document.createElement("label");
+      label.className = className;
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      const checked = subset.filter((leaf) => !excludedLeaves.has(JSON.stringify(leaf.parts))).length;
+      input.checked = checked === subset.length;
+      input.indeterminate = checked > 0 && checked < subset.length;
+      input.addEventListener("change", () => {
+        subset.forEach((leaf) => {
+          const key = JSON.stringify(leaf.parts);
+          if (input.checked) excludedLeaves.delete(key); else excludedLeaves.add(key);
+        });
+        if (leaves.every((leaf) => excludedLeaves.has(JSON.stringify(leaf.parts)))) {
+          exitSelectionMode();
+          return;
+        }
+        renderSelectionDialog();
+      });
+      label.append(input, document.createTextNode(name));
+      return label;
+    };
+    categories.forEach((models, category) => {
+      const section = document.createElement("section");
+      section.className = "selection-category";
+      const title = document.createElement("h3"); title.textContent = category; section.append(title);
+      models.forEach((storages, model) => {
+        const modelBox = document.createElement("div"); modelBox.className = "selection-model";
+        const modelLeaves = Array.from(storages.values()).flat();
+        modelBox.append(checkbox(model, modelLeaves, "selection-model-label"));
+        storages.forEach((stock, storage) => {
+          const storageBox = document.createElement("div"); storageBox.className = "selection-storage";
+          storageBox.append(checkbox(storage, stock, "selection-storage-label"));
+          const colors = document.createElement("div"); colors.className = "selection-colors";
+          stock.forEach((leaf) => colors.append(checkbox(includeQuantity.checked ? `${leaf.parts[3]} · ${leaf.qty} เครื่อง` : leaf.parts[3], [leaf], "selection-color-label")));
+          storageBox.append(colors); modelBox.append(storageBox);
+        });
+        section.append(modelBox);
+      });
+      selectionList.append(section);
+    });
+    if (!leaves.length) selectionList.textContent = "ไม่มีรายการที่มีสต็อกในชุดที่เลือก";
+    selectionText.textContent = previewText(leaves) || "ไม่มีรายการสำหรับคัดลอก";
+    selectionCopy.disabled = !previewText(leaves);
+  }
+
+  selectionOpen.addEventListener("click", () => {
+    renderSelectionDialog();
+    if (!selectionMode) return;
+    selectionModal.hidden = false;
+    el("selectionClose").focus();
+  });
+  function closeSelectionDialog() { selectionModal.hidden = true; selectionOpen.focus(); }
+  el("selectionClose").addEventListener("click", closeSelectionDialog);
+  selectionModal.addEventListener("click", (event) => { if (event.target === selectionModal) closeSelectionDialog(); });
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !selectionModal.hidden) closeSelectionDialog(); });
+  includeQuantity.addEventListener("change", renderSelectionDialog);
+  selectionModal.addEventListener("keydown", event => {
+    if (event.key !== "Tab") return;
+    const controls = Array.from(selectionModal.querySelectorAll('button:not(:disabled),input:not(:disabled)'));
+    const first = controls[0], last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  });
+  function reconcileSelection() {
+    if (!selectionMode) return;
+    const oldCount = selectedPaths.size;
+    for (const [key, parts] of selectedPaths) {
+      if (!getTotalQty(resolve(parts))) selectedPaths.delete(key);
+    }
+    const available = new Set(selectedLeaves().map(leaf => JSON.stringify(leaf.parts)));
+    for (const key of excludedLeaves) if (!available.has(key)) excludedLeaves.delete(key);
+    if (!selectedPaths.size || !selectedLeaves().some(leaf => !excludedLeaves.has(JSON.stringify(leaf.parts)))) exitSelectionMode();
+    else {
+      updateSelectionButton();
+      if (!selectionModal.hidden) renderSelectionDialog();
+    }
+    if (oldCount !== selectedPaths.size) showToast("รายการที่เลือกเปลี่ยนตามข้อมูลสต็อกล่าสุด", "ok");
+  }
+  selectionExit.addEventListener("click", exitSelectionMode);
+  selectionCopy.addEventListener("click", async () => {
+    const value = previewText(selectedLeaves());
+    if (!value) return;
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
+      else {
+        const input = document.createElement("textarea");
+        input.value = value; document.body.append(input); input.select();
+        if (!document.execCommand("copy")) throw new Error("Copy failed");
+        input.remove();
+      }
+      showToast("คัดลอกข้อความแล้ว", "ok");
+    } catch (error) { showToast("คัดลอกไม่สำเร็จ กรุณาลองอีกครั้ง", "err"); }
+  });
+
 
   backBtn.addEventListener("click", () => {
     if (path.length === 0 || !allowNavigation()) return;

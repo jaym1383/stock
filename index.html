@@ -6,7 +6,7 @@
 <title>Jaymart Stock</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=15">
+<link rel="stylesheet" href="style.css?v=16">
 <link rel="manifest" href="manifest.json?v=13">
 <meta name="theme-color" content="#a00000">
 <link rel="icon" href="icons/icon-192-centered.png">
@@ -32,6 +32,8 @@
     <nav id="crumbs" class="crumbs" aria-label="เส้นทางที่เลือก"></nav>
   </header>
   <div class="search-toolbar">
+    <button id="selectionOpen" class="selection-open" type="button" hidden aria-label="Selected">Selected <span id="selectionCount">0</span></button>
+    <button id="selectionExit" class="selection-exit" type="button" hidden aria-label="ล้างรายการที่เลือกทั้งหมดและออกจากโหมดเลือก" title="ล้างทั้งหมดและออกจากโหมดเลือก">×</button>
     <details id="offlineNotice" hidden><summary>Offline mode</summary><div class="offline-details"><p id="offlineDescription"></p><small id="offlineTimestamp"></small></div></details>
     <button class="search-toggle" id="searchToggle" type="button" aria-label="ค้นหารุ่นสินค้า" aria-expanded="false" aria-controls="searchPanel" title="ค้นหารุ่นสินค้า">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16 16 5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -118,13 +120,22 @@
     </div>
   </div>
 
+  <div class="selection-modal" id="selectionModal" role="dialog" aria-modal="true" aria-labelledby="selectionTitle" hidden>
+    <div class="selection-panel">
+      <div class="selection-head"><h2 id="selectionTitle">Selected</h2><button id="selectionClose" type="button" aria-label="ปิด">×</button></div>
+      <label class="selection-qty"><input id="includeQuantity" type="checkbox"> แสดงจำนวนคงเหลือ</label>
+      <div id="selectionList" class="selection-list"></div>
+      <div class="selection-copy-preview"><h3>ตัวอย่างข้อความ</h3><pre id="selectionText"></pre></div>
+      <div class="selection-actions"><button id="selectionCopy" type="button">คัดลอกข้อความ</button></div>
+    </div>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/animejs@3.2.2/lib/anime.min.js"></script>
 <script>document.documentElement.dataset.previewTileMotion = "true";</script>
-<script src="stock-cache.js?v=15"></script>
-<script src="app.js?v=15"></script>
+<script src="stock-cache.js?v=16"></script>
+<script src="app.js?v=16"></script>
 <script>
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js').catch(console.warn));
 </script>
