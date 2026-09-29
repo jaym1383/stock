@@ -1625,6 +1625,7 @@
 
   resetBtn.addEventListener("click", () => {
     if (!allowNavigation()) return;
+    exitSelectionMode();
     closeSearch();
     path = [];
     renderLevel();
