@@ -1358,7 +1358,7 @@
         <div class="result-model">${escapeHtml(path[1])}</div>
         <a class="result-action-btn" href="${escapeHtml(imageSearchUrl)}" target="_blank" rel="noopener noreferrer">ดูรูป</a>
         <button class="result-select-btn" type="button">เพิ่มในรายการ</button>
-        ${itemCode ? `<div class="result-code-section"><button class="result-item-code" type="button" aria-label="ขยายรหัสสินค้า">${escapeHtml(itemCode)}</button><button class="code-zoom-btn" type="button" aria-label="ขยายรหัสสินค้า" title="ขยายรหัสสินค้า"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16 16 5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div>` : ""}
+        ${itemCode ? `<div class="result-code-section"><button class="result-item-code" type="button" aria-label="ขยายรหัสสินค้า">${escapeHtml(itemCode)}</button><div class="result-code-actions"><button class="code-copy-btn" type="button">คัดลอก Item Code</button><button class="code-zoom-btn" type="button" aria-label="ขยายรหัสสินค้า" title="ขยายรหัสสินค้า"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16 16 5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div></div>` : ""}
       </div>
       <div class="result-body">
         <div class="result-variant">${escapeHtml(path[3])}</div>
@@ -1384,6 +1384,18 @@
 
     const codeButton = card.querySelector(".result-item-code");
     if (codeButton) {
+      const copyButton = card.querySelector(".code-copy-btn");
+      copyButton.addEventListener("click", async () => {
+        copyButton.disabled = true;
+        try {
+          await copyText(itemCode);
+          showToast("คัดลอก Item Code แล้ว", "ok");
+        } catch (error) {
+          showToast("คัดลอกไม่สำเร็จ กรุณาลองอีกครั้ง", "err");
+        } finally {
+          copyButton.disabled = false;
+        }
+      });
       codeButton.addEventListener("click", () => openCodeOverlay(itemCode, codeButton));
       card.querySelector(".code-zoom-btn").addEventListener("click", () => openCodeOverlay(itemCode, codeButton));
       const observer = new ResizeObserver(() => fitCode(codeButton, 36));
@@ -1603,18 +1615,34 @@
     }
     if (oldCount !== selectedPaths.size) showToast("รายการที่เลือกเปลี่ยนตามข้อมูลสต็อกล่าสุด", "ok");
   }
+  async function copyText(value) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return;
+    }
+    const previousFocus = document.activeElement;
+    const input = document.createElement("textarea");
+    input.value = value;
+    input.readOnly = true;
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.append(input);
+    try {
+      input.select();
+      input.setSelectionRange(0, input.value.length);
+      if (!document.execCommand("copy")) throw new Error("Copy failed");
+    } finally {
+      input.remove();
+      previousFocus?.focus({ preventScroll: true });
+    }
+  }
+
   selectionExit.addEventListener("click", exitSelectionMode);
   selectionCopy.addEventListener("click", async () => {
     const value = previewText(selectedLeaves());
     if (!value) return;
     try {
-      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
-      else {
-        const input = document.createElement("textarea");
-        input.value = value; document.body.append(input); input.select();
-        if (!document.execCommand("copy")) throw new Error("Copy failed");
-        input.remove();
-      }
+      await copyText(value);
       showToast("คัดลอกข้อความแล้ว", "ok");
     } catch (error) { showToast("คัดลอกไม่สำเร็จ กรุณาลองอีกครั้ง", "err"); }
   });
