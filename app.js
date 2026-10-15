@@ -74,6 +74,12 @@
   /** filename of the data currently loaded, shown for context */
   let dataSourceName = "stock.xlsx";
   let stockVersion = null;
+  let baseTree = {};
+  let dailyState = null;
+  let dailyReady = false;
+  let dailyPollBusy = false;
+  let quantityDirty = false;
+  let pendingImportMetadata = null;
   /** metadata for the ring currently on screen, used for drag hit-testing */
   let currentSegmentsMeta = [];
   /** active pointer-drag session on the center hub, or null */
@@ -155,16 +161,22 @@
       }
       if (!res.ok) throw new Error("HTTP " + res.status);
       stockVersion = res.headers.get("X-Stock-Version");
+      const receivedAt = new Date().toISOString();
       const importedAt = res.headers.get("X-Stock-Imported-At");
       const source = res.headers.get("X-Stock-Source");
-      const metadata = { source: source ? decodeURIComponent(source) : "stock.xlsx", importedAt };
+      const metadata = pendingImportMetadata || { source: source ? decodeURIComponent(source) : "stock.xlsx", importedAt: importedAt || receivedAt };
+      pendingImportMetadata = null;
       showStockNotice(metadata);
       const buf = await res.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array" });
       const rows = mergeWorkbookRows(wb);
       const nextTree = buildTree(rows);
       if (!rows.some(row => String(row.Model || "").trim() && Number.isFinite(Number(row.Qty)) && Number(row.Qty) >= 0)) throw new Error("ไม่พบข้อมูล stock ที่ใช้ได้");
-      tree = nextTree;
+      baseTree = nextTree;
+      tree = JSON.parse(JSON.stringify(baseTree));
+      quantityDirty = false;
+      dailyReady = false;
+      try { await fetchDailyState(false); } catch (_) { dailyReady = false; }
       reconcileSelection();
       lastSnapshot = { tree: nextTree, savedAt: Date.now(), metadata };
       try { await window.stockCache.write(lastSnapshot); }
@@ -183,7 +195,10 @@
       if (!lastSnapshot) {
         try { lastSnapshot = await window.stockCache.read(); } catch (_) { /* Storage may be unavailable. */ }
       }
-      if (lastSnapshot?.tree) tree = lastSnapshot.tree;
+      if (lastSnapshot?.tree) baseTree = lastSnapshot.tree;
+      tree = JSON.parse(JSON.stringify(baseTree));
+      dailyReady = false;
+      quantityDirty = false;
       stockVersion = null;
       showStockNotice(lastSnapshot?.metadata);
       reconcileSelection();
@@ -197,8 +212,81 @@
     } finally { clearTimeout(timeout); }
   }
 
+  function applyDailyState(state) {
+    if (dailyState?.day === state.day && dailyState.version === state.version && state.revision < dailyState.revision) return;
+    dailyState = state;
+    dailyReady = true;
+    tree = JSON.parse(JSON.stringify(baseTree));
+    for (const product of state.products) {
+      let leaf = tree;
+      for (const key of product.path) leaf = leaf?.[key];
+      if (leaf) leaf.qty = product.quantity;
+    }
+    renderNotifications();
+  }
+
+  async function fetchDailyState(refresh = true) {
+    if (!stockVersion || dailyPollBusy || stockRequestBusy && refresh) return;
+    dailyPollBusy = true;
+    try {
+      const response = await fetch(apiUrl("/api/daily-stock"), { cache: "no-store", signal: AbortSignal.timeout(8000) });
+      if (!response.ok) throw new Error("ไม่สามารถโหลดรายการระหว่างวันได้");
+      const state = await response.json();
+      if (state.version !== stockVersion) {
+        dailyReady = false;
+        if (refresh && !quantityDirty) { dailyPollBusy = false; await loadStock(false); }
+        else if (quantityDirty) document.querySelector(".qty-status").textContent = "มีไฟล์สต็อกใหม่ กรุณา Sync ก่อนบันทึก";
+        return;
+      }
+      const changed = !dailyReady || !dailyState || state.day !== dailyState.day || state.revision !== dailyState.revision;
+      applyDailyState(state);
+      if (refresh && changed) {
+        reconcileSelection();
+        renderSearchResults();
+        if (!quantityDirty) renderLevel();
+        else {
+          const status = document.querySelector(".qty-status");
+          if (status) status.textContent = "มีรายการใหม่จากผู้ใช้อื่น ระบบจะตรวจสอบยอดก่อนบันทึก";
+        }
+      }
+    } catch (error) {
+      dailyReady = false;
+      const submit = document.querySelector(".qty-submit");
+      if (submit) submit.disabled = true;
+      const status = document.querySelector(".qty-status");
+      if (status) status.textContent = "เชื่อมต่อรายการกลางไม่ได้ กรุณา Sync ก่อนบันทึก";
+      throw error;
+    } finally { dailyPollBusy = false; }
+  }
+
+  function renderNotifications() {
+    if (!dailyState) return;
+    el("notifyCount").textContent = dailyState.events.length;
+    el("notifyList").replaceChildren();
+    let sold = 0, received = 0;
+    for (const event of [...dailyState.events].reverse()) {
+      if (event.delta < 0) sold -= event.delta; else received += event.delta;
+      const row = document.createElement("li");
+      const time = new Date(event.at).toLocaleTimeString("th-TH", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      row.textContent = `${time} น. · ${event.delta < 0 ? "ขายออก" : "สินค้าเข้า"} ${Math.abs(event.delta)} · ${event.path.join(" / ")} · คงเหลือ ${event.quantity}`;
+      el("notifyList").appendChild(row);
+    }
+    el("notifySummary").textContent = `วันที่ ${dailyState.day} · ขายออก ${sold} · สินค้าเข้า ${received}`;
+    el("notifyEmpty").hidden = dailyState.events.length > 0;
+  }
+
+  el("notifyBtn").addEventListener("click", async () => {
+    el("notifyDialog").showModal();
+    try { await fetchDailyState(); }
+    catch (_) { el("notifySummary").textContent = "เชื่อมต่อไม่สำเร็จ รายการที่เห็นอาจยังไม่ใช่ข้อมูลล่าสุด"; }
+  });
+  el("notifyClose").addEventListener("click", () => el("notifyDialog").close());
+  el("notifyDialog").addEventListener("click", event => { if (event.target === el("notifyDialog")) el("notifyDialog").close(); });
+  setInterval(() => { if (!document.hidden) fetchDailyState().catch(() => {}); }, 5000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) fetchDailyState().catch(() => {}); });
+
   function showStockNotice(metadata) {
-    const time = metadata?.importedAt ? new Date(metadata.importedAt).toLocaleString("th-TH", { timeZone: "Asia/Bangkok" }) : "ไม่ทราบเวลานำเข้า";
+    const time = metadata?.importedAt ? new Date(metadata.importedAt).toLocaleString("th-TH", { timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }) + " น. (เวลาไทย)" : "ไม่ทราบเวลานำเข้า";
     el("stockNotice").textContent = `Stock นี้อัพเดทจากไฟล์ "${metadata?.source || "ไม่ทราบชื่อไฟล์"}" เวลา "${time}" อาจมีสินค้าขายระหว่างวัน โปรดตรวจสอบกับหน้าร้าน เพื่อยืนยันจำนวนจริง`;
   }
 
@@ -265,7 +353,7 @@
       const itemCode = getRowValue(row, ["Item Code", "ItemCode", "Code", "SKU"]);
       const qty = Number(row.Qty);
       if (!cat || !model || !storage || !color) continue;
-      if (!Number.isFinite(qty) || qty <= 0) continue; // out of stock -> never shown
+      if (!Number.isFinite(qty) || qty < 0) continue; // Keep zero stock visible for shared daily adjustments.
 
       if (!t[cat]) t[cat] = {};
       if (!t[cat][model]) t[cat][model] = {};
@@ -417,8 +505,11 @@
       throw new Error(message);
     }
 
+    const receivedAt = new Date().toISOString();
+    const importMetadata = { source: file.name, importedAt: receivedAt };
     const contentType = res.headers.get("content-type") || "";
     if (contentType.includes("application/json")) {
+      pendingImportMetadata = importMetadata;
       if (!await loadStock()) throw new Error("โหลดข้อมูลหลังอัปโหลดไม่สำเร็จ");
       return;
     }
@@ -430,11 +521,16 @@
     if (Object.keys(newTree).length === 0) {
       throw new Error("แปลง PDF สำเร็จ แต่ไม่พบข้อมูล stock ที่ใช้ได้");
     }
-    tree = newTree;
+    baseTree = newTree;
+    tree = JSON.parse(JSON.stringify(baseTree));
+    stockVersion = res.headers.get("X-Stock-Version");
+    dailyReady = false;
+    try { await fetchDailyState(false); } catch (_) {}
     reconcileSelection();
     path = [];
     dataSourceName = file.name.replace(/\.pdf$/i, ".xlsx");
-    lastSnapshot = { tree: newTree, savedAt: Date.now() };
+    showStockNotice(importMetadata);
+    lastSnapshot = { tree: newTree, savedAt: Date.now(), metadata: importMetadata };
     try { await window.stockCache.write(lastSnapshot); } catch (error) { console.warn("Unable to save offline stock", error); }
     setOffline(false);
     renderSearchResults();
@@ -479,6 +575,7 @@
         throw new Error(message);
       }
 
+      pendingImportMetadata = { source: file.name, importedAt: new Date().toISOString() };
       return true;
     } catch (err) {
       if (!STOCK_API_BASE && err instanceof TypeError) return false;
@@ -494,7 +591,10 @@
     if (Object.keys(newTree).length === 0) {
       throw new Error("ไม่พบข้อมูลที่ใช้ได้ในไฟล์นี้ (ตรวจคอลัมน์ Category/Model/Storage/Color/Qty)");
     }
-    tree = newTree;
+    baseTree = newTree;
+    tree = JSON.parse(JSON.stringify(newTree));
+    stockVersion = null;
+    dailyReady = false;
     path = [];
     dataSourceName = file.name;
     renderSearchResults();
@@ -1225,6 +1325,7 @@
   // ---------------------------------------------------------------
 
   function removeResultCard() {
+    quantityDirty = false;
     const existing = document.querySelector(".result-card-pos");
     if (existing) {
       if (existing.codeResizeObserver) existing.codeResizeObserver.disconnect();
@@ -1365,6 +1466,9 @@
     const imageSearchUrl = buildImageSearchUrl(path);
     const productPath = [...path];
     const editVersion = stockVersion;
+    const editDay = dailyState?.day;
+    quantityDirty = false;
+    let submissionId = null;
     const overviewState = pendingOverviewState;
     pendingOverviewState = null;
 
@@ -1407,8 +1511,10 @@
     const status = card.querySelector(".qty-status");
     function refreshEditor() {
       card.querySelector(".qty-draft").textContent = draft;
-      minus.disabled = draft === 0 || !editVersion;
-      plus.disabled = !editVersion;
+      minus.disabled = draft === 0 || !editVersion || !dailyReady;
+      plus.disabled = !editVersion || !dailyReady;
+      submit.disabled = !dailyReady;
+      quantityDirty = draft !== qty;
       submit.hidden = draft === qty;
     }
     minus.addEventListener("click", () => { draft = Math.max(0, draft - 1); refreshEditor(); });
@@ -1417,16 +1523,30 @@
       submit.disabled = minus.disabled = plus.disabled = true;
       status.textContent = "กำลังบันทึก…";
       try {
+        if (!submissionId) submissionId = crypto.randomUUID();
         const response = await fetch(apiUrl("/api/stock/quantity"), {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path: productPath, quantity: draft, version: editVersion }),
+          body: JSON.stringify({ path: productPath, quantity: draft, expected_quantity: qty, version: editVersion, day: editDay, request_id: submissionId }),
           signal: AbortSignal.timeout(15000)
         });
         const result = await response.json();
-        if (!response.ok) throw new Error(result.detail || "บันทึกไม่สำเร็จ");
-        const loaded = await loadStock(false);
-        if (loaded && draft > 0) { path = productPath; renderLevel(); }
-        showToast(loaded ? "บันทึกจำนวนสินค้าแล้ว" : "บันทึกแล้ว แต่โหลดข้อมูลล่าสุดไม่สำเร็จ", loaded ? "ok" : "err");
+        if (!response.ok) {
+          submissionId = null;
+          if (response.status === 409) {
+            quantityDirty = false;
+            if (result.version && result.version !== stockVersion) await loadStock(false);
+            else { await fetchDailyState(); renderLevel(); }
+            showToast(result.detail, "err");
+            return;
+          }
+          throw new Error(result.detail || "บันทึกไม่สำเร็จ");
+        }
+        quantityDirty = false;
+        applyDailyState(result);
+        reconcileSelection();
+        renderSearchResults();
+        renderLevel();
+        showToast("บันทึกรายการวันนี้แล้ว ทุกคนเห็นยอดร่วมกัน", "ok");
       } catch (error) {
         status.textContent = error.message;
         submit.disabled = false;
@@ -1434,7 +1554,7 @@
       }
     });
     refreshEditor();
-    if (!editVersion) status.textContent = "กรุณาซิงก์ข้อมูลออนไลน์ก่อนปรับจำนวน";
+    status.textContent = dailyReady ? "− ขายออก / + สินค้าเข้า · บันทึกยอดกลางเฉพาะวันนี้" : "กรุณา Sync รายการกลางก่อนปรับจำนวน";
     renderOverview(card, overviewState);
     const resultSelect = card.querySelector(".result-select-btn");
     resultSelect.addEventListener("click", () => toggleSelectedPath([...path]));

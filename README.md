@@ -65,17 +65,29 @@ https://adizjust.pythonanywhere.com/health
 - อัปโหลด PDF ผ่านหน้าเว็บจริงสำเร็จ และ backend คืน `stock.xlsx` กลับมาให้ UI อ่านทันที
 - ทดสอบ API ข้อมูลชุดกลางด้วยสองไคลเอนต์ และตรวจว่าไฟล์เสียไม่ทับข้อมูลเดิม
 
-## Stock quantity updates
+## Daily stock display and Notify
 
-The home notice displays the original import filename and import time in Asia/Bangkok.
-Older imports without metadata show an unknown import time until the next upload.
-The final product card has minus/plus controls and a Submit button. Submit writes the
-new quantity to the shared server workbook; zero quantities disappear from browsing.
-Updates require the version loaded by the client and return HTTP 409 if another
-client has changed the workbook. Offline snapshots cannot submit updates.
+`POST /api/stock/quantity` (also `/api/sell-out`) accepts `path`, `quantity`,
+`expected_quantity`, `version`, `day`, and a unique `request_id`. It records a
+sell-out (minus) or receipt (plus) in `data/daily-stock.sqlite3`. The imported
+`stock.xlsx` is never modified. Repeated requests with the same ID do not create
+another sale. A stale product quantity, import version, or business day returns
+HTTP 409 so the user can review the current stock before submitting again.
 
-Deploy both GitHub Pages and the PythonAnywhere backend for this feature. On
-PythonAnywhere run `git -C ~/stock pull --ff-only`, then reload the web app.
-The backend adds `POST /api/stock/quantity` and stores import metadata alongside
-`data/stock.xlsx` in `stock.metadata.json`. On Linux, a file lock serializes writes
-across web workers. Existing workbook data is preserved during deployment.
+`GET /api/daily-stock` returns the current business day, stock version, product
+display overrides and today's shared Notify events. The frontend checks every
+five seconds while visible and refreshes when returning to the tab. Products
+sold down to zero remain visible as zero. Notify shows each movement's actual
+server timestamp. The import warning shows the filename and full Thai date/time,
+including seconds; PDF imports capture the time the conversion response arrives.
+
+At 00:00 Asia/Bangkok, the API switches to a fresh business day: display quantities
+return to the imported workbook and Notify displays only the new day's events.
+Older events remain in SQLite for audit. A new import starts a new set of display
+overrides, while earlier movements from today remain visible in Notify.
+Offline snapshots are read-only and cannot submit shared movements.
+
+Deploy both the frontend and `backend/app.py`; reload the PythonAnywhere web app.
+No new Python dependency is needed (SQLite is built in). Keep `data/stock.xlsx`,
+`data/stock.metadata.json`, and `data/daily-stock.sqlite3` when deploying. On Linux,
+a file lock plus SQLite transactions serialize submissions across workers.

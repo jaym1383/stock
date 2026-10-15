@@ -3,7 +3,8 @@ from io import BytesIO
 from tempfile import TemporaryDirectory
 import os
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import sqlite3
 from threading import RLock
 from contextlib import contextmanager
 from urllib.parse import quote
@@ -92,7 +93,7 @@ def stock_metadata():
     try:
         return json.loads(STOCK_PATH.with_suffix(".metadata.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {"source": STOCK_PATH.name, "imported_at": None}
+        return {"source": STOCK_PATH.name, "imported_at": datetime.fromtimestamp(STOCK_PATH.stat().st_mtime, timezone.utc).isoformat()}
 
 
 @app.get("/api/stock-version")
@@ -116,47 +117,115 @@ def get_stock():
     return no_store(response)
 
 
+def business_day():
+    return datetime.now(timezone(timedelta(hours=7))).date().isoformat()
+
+
+def daily_database():
+    STOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(STOCK_PATH.with_name("daily-stock.sqlite3"), timeout=15)
+    connection.row_factory = sqlite3.Row
+    connection.execute("""CREATE TABLE IF NOT EXISTS movements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT UNIQUE NOT NULL,
+        day TEXT NOT NULL, stock_version TEXT NOT NULL, product TEXT NOT NULL,
+        delta INTEGER NOT NULL, quantity INTEGER NOT NULL, created_at TEXT NOT NULL
+    )""")
+    connection.execute("CREATE INDEX IF NOT EXISTS movements_day ON movements(day, stock_version)")
+    connection.commit()
+    return connection
+
+
+def daily_state(connection, version):
+    day = business_day()
+    events = []
+    products = {}
+    for row in connection.execute("SELECT * FROM movements WHERE day = ? ORDER BY id", (day,)):
+        event = {"id": row["id"], "path": json.loads(row["product"]), "delta": row["delta"],
+                 "quantity": row["quantity"], "at": row["created_at"], "stock_version": row["stock_version"]}
+        events.append(event)
+        if row["stock_version"] == version:
+            products[row["product"]] = {"path": event["path"], "quantity": event["quantity"]}
+    return {"day": day, "version": version, "revision": events[-1]["id"] if events else 0,
+            "products": list(products.values()), "events": events}
+
+
+@app.get("/api/daily-stock")
+def get_daily_stock():
+    with stock_lock():
+        if not STOCK_PATH.exists():
+            return no_store(jsonify({"detail": "Stock not found."})), 404
+        with daily_database() as connection:
+            state = daily_state(connection, stock_version())
+        connection.close()
+    return no_store(jsonify(state))
+
+
 @app.route("/api/stock/quantity", methods=["POST", "OPTIONS"])
+@app.route("/api/sell-out", methods=["POST", "OPTIONS"])
 def update_quantity():
     if request.method == "OPTIONS":
         return make_response("", 204)
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({"detail": "Invalid request."}), 400
-    keys = data.get("path")
-    qty = data.get("quantity")
-    if not isinstance(keys, list) or len(keys) != 4 or not all(isinstance(k, str) and k for k in keys) or type(qty) is not int or qty < 0:
-        return jsonify({"detail": "Invalid product or quantity."}), 400
+    keys, qty = data.get("path"), data.get("quantity")
+    expected = data.get("expected_quantity")
+    request_id = data.get("request_id")
+    if (not isinstance(keys, list) or len(keys) != 4 or not all(isinstance(k, str) and 0 < len(k) <= 500 for k in keys)
+            or type(qty) is not int or not 0 <= qty <= 1000000
+            or type(expected) is not int or not 0 <= expected <= 1000000
+            or not isinstance(request_id, str) or not 8 <= len(request_id) <= 100):
+        return jsonify({"detail": "Invalid product, quantity or request ID."}), 400
     with stock_lock():
         if not STOCK_PATH.exists():
             return jsonify({"detail": "Stock not found."}), 404
-        if data.get("version") != stock_version():
-            return jsonify({"detail": "ข้อมูลถูกเปลี่ยนแล้ว กรุณาโหลดสต็อกล่าสุดแล้วลองอีกครั้ง"}), 409
-        workbook = load_workbook(STOCK_PATH)
-        matches = []
-        for sheet in workbook.worksheets:
-            if sheet.title.strip().lower() in {"คำแนะนำ", "instructions", "instruction", "readme", "info"}:
-                continue
-            headers = {str(c.value or "").strip().lower(): c.column for c in sheet[1]}
-            if not {"model", "storage", "color", "qty"}.issubset(headers):
-                continue
-            for row in sheet.iter_rows(min_row=2):
-                def value(name):
-                    return str(row[headers[name]-1].value or "").strip()
-                key = [value("category") if "category" in headers else sheet.title.strip(), value("model"), value("storage"), value("color")]
-                if key == keys:
-                    matches.append(row[headers["qty"]-1])
-        if not matches:
-            workbook.close()
-            return jsonify({"detail": "Product not found."}), 404
-        matches[0].value = qty
-        for cell in matches[1:]:
-            cell.value = 0
-        output = BytesIO()
-        workbook.save(output)
-        workbook.close()
-        version = publish_stock(output.getvalue())
-    return no_store(jsonify({"success": True, "quantity": qty, "version": version}))
+        version = stock_version()
+        if data.get("version") != version or data.get("day") != business_day():
+            return no_store(jsonify({"detail": "ข้อมูลหรือวันที่เปลี่ยนแล้ว กรุณา Sync และตรวจสอบยอดใหม่"})), 409
+        product = json.dumps(keys, ensure_ascii=False)
+        connection = daily_database()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            previous = connection.execute("SELECT * FROM movements WHERE request_id = ?", (request_id,)).fetchone()
+            if previous:
+                if previous["product"] != product or previous["quantity"] != qty or previous["stock_version"] != version or previous["day"] != business_day():
+                    return jsonify({"detail": "Request ID already used."}), 409
+                return no_store(jsonify({"success": True, "quantity": qty, **daily_state(connection, version)}))
+            workbook = load_workbook(STOCK_PATH, read_only=True, data_only=True)
+            base_quantity = 0
+            found = False
+            try:
+                for sheet in workbook.worksheets:
+                    if sheet.title.strip().lower() in {"คำแนะนำ", "instructions", "instruction", "readme", "info"}:
+                        continue
+                    values = sheet.iter_rows(values_only=True)
+                    headers = {str(v or "").strip().lower(): i for i, v in enumerate(next(values, []))}
+                    if not {"model", "storage", "color", "qty"}.issubset(headers):
+                        continue
+                    for row in values:
+                        def value(name):
+                            return str(row[headers[name]] if row[headers[name]] is not None else "").strip()
+                        key = [value("category") if "category" in headers else sheet.title.strip(), value("model"), value("storage"), value("color")]
+                        if key == keys:
+                            found = True
+                            base_quantity += max(0, int(float(row[headers["qty"]] or 0)))
+            finally:
+                workbook.close()
+            if not found:
+                return jsonify({"detail": "Product not found."}), 404
+            latest = connection.execute("SELECT quantity FROM movements WHERE day = ? AND stock_version = ? AND product = ? ORDER BY id DESC LIMIT 1", (business_day(), version, product)).fetchone()
+            current = latest["quantity"] if latest else base_quantity
+            if expected != current:
+                return no_store(jsonify({"detail": "มีผู้ใช้ปรับยอดแล้ว กรุณาตรวจสอบยอดล่าสุด", "quantity": current})), 409
+            delta = qty - current
+            if delta == 0:
+                return jsonify({"detail": "Quantity has not changed."}), 400
+            connection.execute("INSERT INTO movements(request_id, day, stock_version, product, delta, quantity, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                               (request_id, business_day(), version, product, delta, qty, datetime.now(timezone.utc).isoformat()))
+            connection.commit()
+            return no_store(jsonify({"success": True, "quantity": qty, **daily_state(connection, version)}))
+        finally:
+            connection.close()
 
 
 @app.route("/api/upload-stock", methods=["POST", "OPTIONS"])

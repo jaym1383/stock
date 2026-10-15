@@ -6,7 +6,7 @@
 <title>Jaymart Stock</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=21">
+<link rel="stylesheet" href="style.css?v=22">
 <link rel="manifest" href="manifest.json?v=13">
 <meta name="theme-color" content="#a00000">
 <link rel="icon" href="icons/icon-192-centered.png">
@@ -31,6 +31,7 @@
     </div>
     <nav id="crumbs" class="crumbs" aria-label="เส้นทางที่เลือก"></nav>
   </header>
+  <button id="notifyBtn" class="notify-btn" type="button">Notify · รายการวันนี้ <span id="notifyCount">0</span></button>
   <aside id="stockNotice" class="stock-notice" role="note">กำลังตรวจสอบไฟล์และเวลาอัปเดตสต็อก… อาจมีสินค้าขายระหว่างวัน โปรดตรวจสอบกับหน้าร้าน เพื่อยืนยันจำนวนจริง</aside>
   <div class="search-toolbar">
     <button id="selectionOpen" class="selection-open" type="button" hidden aria-label="Selected">Selected <span id="selectionCount">0</span></button>
@@ -130,13 +131,19 @@
       <div class="selection-actions"><button id="selectionCopy" type="button">คัดลอกข้อความ</button></div>
     </div>
   </div>
+  <dialog id="notifyDialog" class="notify-dialog" aria-labelledby="notifyTitle">
+    <div class="notify-head"><h2 id="notifyTitle">รายการขายและสินค้าเข้าวันนี้</h2><button id="notifyClose" type="button" aria-label="ปิด">×</button></div>
+    <p id="notifySummary">กำลังโหลดรายการกลาง…</p>
+    <p class="notify-help">ทุกคนเห็นรายการร่วมกัน · รีเซ็ตยอดแสดงผลเวลา 00:00 น. ประเทศไทยตามไฟล์นำเข้า · ไม่แก้ไฟล์ต้นฉบับ</p>
+    <p id="notifyEmpty">วันนี้ยังไม่มีรายการ</p><ul id="notifyList"></ul>
+  </dialog>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/animejs@3.2.2/lib/anime.min.js"></script>
 <script>document.documentElement.dataset.previewTileMotion = "true";</script>
-<script src="stock-cache.js?v=21"></script>
-<script src="app.js?v=21"></script>
+<script src="stock-cache.js?v=22"></script>
+<script src="app.js?v=22"></script>
 <script>
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js').catch(console.warn));
 </script>
