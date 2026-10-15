@@ -990,3 +990,12 @@ body{
 .selection-actions button{ flex:1; min-height:42px; border:1px solid #a00000; border-radius:5px; background:#a00000; color:#fff; font:700 15px var(--font-body); cursor:pointer; }
 .selection-actions .selection-secondary{ background:#fff; color:#a00000; }
 .selection-actions button:disabled{ opacity:.45; cursor:not-allowed; }
+
+.stock-notice { flex:0 0 auto; margin:4px 12px 8px; padding:9px 12px; border:1px solid #e6b965; border-radius:8px; background:#fff4d9; color:#694500; font:12px/1.6 sans-serif; overflow-wrap:anywhere; }
+.quantity-editor { display:flex; flex-wrap:wrap; justify-content:center; align-items:center; gap:12px; margin:14px 0; }
+.quantity-editor button { min-width:44px; min-height:44px; border:1px solid #c5272e; border-radius:8px; background:#fff; color:#a00000; font-size:20px; cursor:pointer; }
+.quantity-editor .qty-submit { padding:8px 14px; background:#a00000; color:#fff; font-size:14px; }
+.quantity-editor button:disabled { opacity:.4; cursor:default; }
+.qty-draft { min-width:32px; text-align:center; font-size:24px; }
+.qty-status { font:12px/1.5 sans-serif; text-align:center; color:#a00000; }
+.quantity-editor [hidden] { display:none; }

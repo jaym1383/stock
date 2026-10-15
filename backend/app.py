@@ -2,6 +2,18 @@ from pathlib import Path
 from io import BytesIO
 from tempfile import TemporaryDirectory
 import os
+import json
+from datetime import datetime, timezone
+from threading import RLock
+from contextlib import contextmanager
+from urllib.parse import quote
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
+STOCK_LOCK = RLock()
 
 from flask import Flask, jsonify, make_response, request, send_file
 from openpyxl import load_workbook
@@ -9,6 +21,21 @@ from openpyxl import load_workbook
 
 app = Flask(__name__)
 STOCK_PATH = Path(os.environ.get("STOCK_DATA_DIR", Path(__file__).resolve().parent.parent / "data")) / "stock.xlsx"
+
+
+@contextmanager
+def stock_lock():
+    # PythonAnywhere can serve requests in multiple worker processes.
+    with STOCK_LOCK:
+        STOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with STOCK_PATH.with_suffix(".lock").open("a+b") as lock_file:
+            if fcntl is not None:
+                fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 ALLOWED_ORIGINS = {
     "https://jaym1383.github.io",
@@ -25,7 +52,7 @@ def add_cors_headers(response):
         response.headers["Vary"] = "Origin"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
-    response.headers["Access-Control-Expose-Headers"] = "X-Stock-Version, X-Stock-Rows, X-Stock-Quantity"
+    response.headers["Access-Control-Expose-Headers"] = "X-Stock-Version, X-Stock-Rows, X-Stock-Quantity, X-Stock-Source, X-Stock-Imported-At"
     return response
 
 
@@ -49,13 +76,23 @@ def no_store(response):
     return response
 
 
-def publish_stock(content):
+def publish_stock(content, source=None):
     STOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(dir=STOCK_PATH.parent) as tmp:
         staged = Path(tmp) / "stock.xlsx"
         staged.write_bytes(content)
         os.replace(staged, STOCK_PATH)
+    if source is not None:
+        metadata = {"source": source, "imported_at": datetime.now(timezone.utc).isoformat()}
+        STOCK_PATH.with_suffix(".metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
     return stock_version()
+
+
+def stock_metadata():
+    try:
+        return json.loads(STOCK_PATH.with_suffix(".metadata.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"source": STOCK_PATH.name, "imported_at": None}
 
 
 @app.get("/api/stock-version")
@@ -66,11 +103,60 @@ def get_stock_version():
 
 @app.get("/api/stock")
 def get_stock():
-    if not STOCK_PATH.exists():
-        return no_store(jsonify({"detail": "No shared stock has been uploaded yet."})), 404
-    response = send_file(STOCK_PATH, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    response.headers["X-Stock-Version"] = stock_version()
+    with stock_lock():
+        if not STOCK_PATH.exists():
+            return no_store(jsonify({"detail": "No shared stock has been uploaded yet."})), 404
+        content = STOCK_PATH.read_bytes()
+        version = stock_version()
+        metadata = stock_metadata()
+    response = send_file(BytesIO(content), mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    response.headers["X-Stock-Version"] = version
+    response.headers["X-Stock-Source"] = quote(metadata["source"])
+    response.headers["X-Stock-Imported-At"] = metadata.get("imported_at") or ""
     return no_store(response)
+
+
+@app.route("/api/stock/quantity", methods=["POST", "OPTIONS"])
+def update_quantity():
+    if request.method == "OPTIONS":
+        return make_response("", 204)
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"detail": "Invalid request."}), 400
+    keys = data.get("path")
+    qty = data.get("quantity")
+    if not isinstance(keys, list) or len(keys) != 4 or not all(isinstance(k, str) and k for k in keys) or type(qty) is not int or qty < 0:
+        return jsonify({"detail": "Invalid product or quantity."}), 400
+    with stock_lock():
+        if not STOCK_PATH.exists():
+            return jsonify({"detail": "Stock not found."}), 404
+        if data.get("version") != stock_version():
+            return jsonify({"detail": "ข้อมูลถูกเปลี่ยนแล้ว กรุณาโหลดสต็อกล่าสุดแล้วลองอีกครั้ง"}), 409
+        workbook = load_workbook(STOCK_PATH)
+        matches = []
+        for sheet in workbook.worksheets:
+            if sheet.title.strip().lower() in {"คำแนะนำ", "instructions", "instruction", "readme", "info"}:
+                continue
+            headers = {str(c.value or "").strip().lower(): c.column for c in sheet[1]}
+            if not {"model", "storage", "color", "qty"}.issubset(headers):
+                continue
+            for row in sheet.iter_rows(min_row=2):
+                def value(name):
+                    return str(row[headers[name]-1].value or "").strip()
+                key = [value("category") if "category" in headers else sheet.title.strip(), value("model"), value("storage"), value("color")]
+                if key == keys:
+                    matches.append(row[headers["qty"]-1])
+        if not matches:
+            workbook.close()
+            return jsonify({"detail": "Product not found."}), 404
+        matches[0].value = qty
+        for cell in matches[1:]:
+            cell.value = 0
+        output = BytesIO()
+        workbook.save(output)
+        workbook.close()
+        version = publish_stock(output.getvalue())
+    return no_store(jsonify({"success": True, "quantity": qty, "version": version}))
 
 
 @app.route("/api/upload-stock", methods=["POST", "OPTIONS"])
@@ -111,7 +197,8 @@ def upload_stock():
     except Exception:
         return jsonify({"detail": "Invalid XLSX workbook."}), 400
 
-    version = publish_stock(content)
+    with stock_lock():
+        version = publish_stock(content, request.form.get("source_name") or uploaded.filename)
     return no_store(jsonify({"success": True, "version": version, "rows": usable}))
 
 
@@ -150,7 +237,8 @@ def convert_pdf():
             write_workbook(rows, str(xlsx_path))
             output = BytesIO(xlsx_path.read_bytes())
             output.seek(0)
-            version = publish_stock(output.getvalue())
+            with stock_lock():
+                version = publish_stock(output.getvalue(), filename)
 
             response = send_file(
                 output,

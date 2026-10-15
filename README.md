@@ -64,3 +64,18 @@ https://adizjust.pythonanywhere.com/health
 - PythonAnywhere `/health` ตอบ `{"ok": true}`
 - อัปโหลด PDF ผ่านหน้าเว็บจริงสำเร็จ และ backend คืน `stock.xlsx` กลับมาให้ UI อ่านทันที
 - ทดสอบ API ข้อมูลชุดกลางด้วยสองไคลเอนต์ และตรวจว่าไฟล์เสียไม่ทับข้อมูลเดิม
+
+## Stock quantity updates
+
+The home notice displays the original import filename and import time in Asia/Bangkok.
+Older imports without metadata show an unknown import time until the next upload.
+The final product card has minus/plus controls and a Submit button. Submit writes the
+new quantity to the shared server workbook; zero quantities disappear from browsing.
+Updates require the version loaded by the client and return HTTP 409 if another
+client has changed the workbook. Offline snapshots cannot submit updates.
+
+Deploy both GitHub Pages and the PythonAnywhere backend for this feature. On
+PythonAnywhere run `git -C ~/stock pull --ff-only`, then reload the web app.
+The backend adds `POST /api/stock/quantity` and stores import metadata alongside
+`data/stock.xlsx` in `stock.metadata.json`. On Linux, a file lock serializes writes
+across web workers. Existing workbook data is preserved during deployment.

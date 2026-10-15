@@ -73,6 +73,7 @@
   let path = [];
   /** filename of the data currently loaded, shown for context */
   let dataSourceName = "stock.xlsx";
+  let stockVersion = null;
   /** metadata for the ring currently on screen, used for drag hit-testing */
   let currentSegmentsMeta = [];
   /** active pointer-drag session on the center hub, or null */
@@ -153,14 +154,19 @@
         res = await fetch(`stock.xlsx?t=${Date.now()}`, { cache: "no-store", signal: controller.signal });
       }
       if (!res.ok) throw new Error("HTTP " + res.status);
+      stockVersion = res.headers.get("X-Stock-Version");
+      const importedAt = res.headers.get("X-Stock-Imported-At");
+      const source = res.headers.get("X-Stock-Source");
+      const metadata = { source: source ? decodeURIComponent(source) : "stock.xlsx", importedAt };
+      showStockNotice(metadata);
       const buf = await res.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array" });
       const rows = mergeWorkbookRows(wb);
       const nextTree = buildTree(rows);
-      if (!Object.keys(nextTree).length) throw new Error("ไม่พบข้อมูล stock ที่ใช้ได้");
+      if (!rows.some(row => String(row.Model || "").trim() && Number.isFinite(Number(row.Qty)) && Number(row.Qty) >= 0)) throw new Error("ไม่พบข้อมูล stock ที่ใช้ได้");
       tree = nextTree;
       reconcileSelection();
-      lastSnapshot = { tree: nextTree, savedAt: Date.now() };
+      lastSnapshot = { tree: nextTree, savedAt: Date.now(), metadata };
       try { await window.stockCache.write(lastSnapshot); }
       catch (error) { console.warn("Unable to save offline stock", error); }
       renderSearchResults();
@@ -177,7 +183,9 @@
       if (!lastSnapshot) {
         try { lastSnapshot = await window.stockCache.read(); } catch (_) { /* Storage may be unavailable. */ }
       }
-      if (lastSnapshot?.tree && Object.keys(lastSnapshot.tree).length) tree = lastSnapshot.tree;
+      if (lastSnapshot?.tree) tree = lastSnapshot.tree;
+      stockVersion = null;
+      showStockNotice(lastSnapshot?.metadata);
       reconcileSelection();
       path = [];
       closeSearch();
@@ -187,6 +195,11 @@
       setOffline(true);
       return false;
     } finally { clearTimeout(timeout); }
+  }
+
+  function showStockNotice(metadata) {
+    const time = metadata?.importedAt ? new Date(metadata.importedAt).toLocaleString("th-TH", { timeZone: "Asia/Bangkok" }) : "ไม่ทราบเวลานำเข้า";
+    el("stockNotice").textContent = `Stock นี้อัพเดทจากไฟล์ "${metadata?.source || "ไม่ทราบชื่อไฟล์"}" เวลา "${time}" อาจมีสินค้าขายระหว่างวัน โปรดตรวจสอบกับหน้าร้าน เพื่อยืนยันจำนวนจริง`;
   }
 
   function isLocalAppServer() {
@@ -431,6 +444,7 @@
 
   async function uploadStockFile(file) {
     const formData = new FormData();
+    formData.append("source_name", file.name);
     if (STOCK_API_BASE) {
       const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
       const rows = mergeWorkbookRows(wb);
@@ -1349,6 +1363,8 @@
     const maxScale = 12; // reference scale for the stock bar (purely visual)
     const pct = Math.max(6, Math.min(100, Math.round((qty / maxScale) * 100)));
     const imageSearchUrl = buildImageSearchUrl(path);
+    const productPath = [...path];
+    const editVersion = stockVersion;
     const overviewState = pendingOverviewState;
     pendingOverviewState = null;
 
@@ -1367,6 +1383,13 @@
           <div class="result-qty-label">เครื่องคงเหลือ</div>
         </div>
         <div class="result-bar-track"><div class="result-bar-fill" id="resultBarFill"></div></div>
+        <div class="quantity-editor" aria-label="ปรับจำนวนสินค้า">
+          <button type="button" class="qty-minus" aria-label="ลดจำนวน">−</button>
+          <output class="qty-draft" aria-live="polite">${qty}</output>
+          <button type="button" class="qty-plus" aria-label="เพิ่มจำนวน">+</button>
+          <button type="button" class="qty-submit" hidden>Submit · บันทึก</button>
+        </div>
+        <div class="qty-status" role="status"></div>
         <div class="stock-overview">
           <button class="overview-toggle" type="button" aria-expanded="false">ความจุและสีที่มีสต็อก <span class="overview-chevron" aria-hidden="true">⌄</span></button>
           <div class="overview-panel" hidden><div class="overview-list"></div></div>
@@ -1377,6 +1400,41 @@
     wheelWrap.appendChild(pos);
     stage.classList.add("stage--result");
     wheelWrap.classList.add("wheel-wrap--result");
+    let draft = qty;
+    const minus = card.querySelector(".qty-minus");
+    const plus = card.querySelector(".qty-plus");
+    const submit = card.querySelector(".qty-submit");
+    const status = card.querySelector(".qty-status");
+    function refreshEditor() {
+      card.querySelector(".qty-draft").textContent = draft;
+      minus.disabled = draft === 0 || !editVersion;
+      plus.disabled = !editVersion;
+      submit.hidden = draft === qty;
+    }
+    minus.addEventListener("click", () => { draft = Math.max(0, draft - 1); refreshEditor(); });
+    plus.addEventListener("click", () => { draft += 1; refreshEditor(); });
+    submit.addEventListener("click", async () => {
+      submit.disabled = minus.disabled = plus.disabled = true;
+      status.textContent = "กำลังบันทึก…";
+      try {
+        const response = await fetch(apiUrl("/api/stock/quantity"), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: productPath, quantity: draft, version: editVersion }),
+          signal: AbortSignal.timeout(15000)
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || "บันทึกไม่สำเร็จ");
+        const loaded = await loadStock(false);
+        if (loaded && draft > 0) { path = productPath; renderLevel(); }
+        showToast(loaded ? "บันทึกจำนวนสินค้าแล้ว" : "บันทึกแล้ว แต่โหลดข้อมูลล่าสุดไม่สำเร็จ", loaded ? "ok" : "err");
+      } catch (error) {
+        status.textContent = error.message;
+        submit.disabled = false;
+        refreshEditor();
+      }
+    });
+    refreshEditor();
+    if (!editVersion) status.textContent = "กรุณาซิงก์ข้อมูลออนไลน์ก่อนปรับจำนวน";
     renderOverview(card, overviewState);
     const resultSelect = card.querySelector(".result-select-btn");
     resultSelect.addEventListener("click", () => toggleSelectedPath([...path]));
