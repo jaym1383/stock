@@ -1113,9 +1113,9 @@
       transitionToRing([]);
     } else {
       promptEl.textContent = LEVEL_PROMPTS[path.length];
-      // Radial stays fast for <= 8 choices. When a level has more than 8,
-      // temporarily replace the wheel with a readable product grid.
-      if (items.length > 8) {
+      // Always show brands on the home level as radial tiles. Deeper levels
+      // switch to a readable product grid when there are more than 8 choices.
+      if (path.length > 0 && items.length > 8) {
         transitionToProductGrid(items);
       } else {
         transitionToRadial(items);

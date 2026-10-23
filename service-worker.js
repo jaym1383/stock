@@ -1,6 +1,6 @@
 // Bump this on every deploy that changes any cached file — it forces old
 // caches to be dropped so users actually get the new version.
-const CACHE_VERSION = "v22";
+const CACHE_VERSION = "v23";
 const CACHE_NAME = "stock-radial-" + CACHE_VERSION;
 
 // Same-origin app shell + the two CDN libraries the app depends on.
@@ -10,7 +10,7 @@ const PRECACHE_URLS = [
   "./index.html",
   "./style.css",
   "./app.js",
-  "./app.js?v=22",
+  "./app.js?v=23",
   "./style.css?v=22",
   "./stock-cache.js?v=22",
   "./manifest.json",
