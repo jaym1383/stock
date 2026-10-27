@@ -71,6 +71,54 @@
   let tree = {};
   /** current selection path, e.g. ["Smartphone","iPhone 15 Pro","128GB"] */
   let path = [];
+  // The Android Back button follows the browser's session history. Keep the
+  // first entry as the app's home so Back there is left to the system.
+  const navigationSession = Date.now() + "-" + Math.random().toString(36).slice(2);
+  let navigationIndex = 0;
+  function navigationState(parts = path, overlayName = null) {
+    return { stockNavigation: navigationSession, index: navigationIndex, path: [...parts], overlay: overlayName };
+  }
+  history.replaceState(navigationState(), "");
+  function pushNavigation(parts = path, overlayName = null) {
+    navigationIndex += 1;
+    history.pushState(navigationState(parts, overlayName), "");
+  }
+  function resetNavigation() {
+    if (navigationIndex > 0) history.go(-navigationIndex);
+  }
+  function closeNavigationOverlay(name) {
+    if (history.state?.stockNavigation === navigationSession && history.state.overlay === name) {
+      history.back();
+      return true;
+    }
+    return false;
+  }
+  window.addEventListener("popstate", (event) => {
+    const state = event.state;
+    if (!state || state.stockNavigation !== navigationSession) return;
+    navigationIndex = state.index;
+    closeCodeOverlay(false);
+    selectionModal.hidden = true;
+    const notify = el("notifyDialog");
+    if (notify.open) notify.close();
+    closeSearch();
+    const nextPath = state.path.slice();
+    while (nextPath.length && !resolve(nextPath)) nextPath.pop();
+    if (JSON.stringify(path) !== JSON.stringify(nextPath)) {
+      exitSelectionMode();
+      path = nextPath;
+      renderLevel();
+    }
+    if (state.overlay === "code" && path.length === 4) {
+      const code = resolve(path)?.itemCode;
+      if (code) openCodeOverlay(String(code), document.querySelector(".result-item-code"), false);
+    } else if (state.overlay === "selection" && selectionMode) {
+      renderSelectionDialog();
+      selectionModal.hidden = false;
+    } else if (state.overlay === "notify") {
+      notify.showModal();
+    }
+  });
   /** filename of the data currently loaded, shown for context */
   let dataSourceName = "stock.xlsx";
   let stockVersion = null;
@@ -147,6 +195,7 @@
   // ---------------------------------------------------------------
 
   async function loadStock(showFailureOverlay = true) {
+    resetNavigation();
     exitSelectionMode();
     const startedAt = performance.now();
     const controller = new AbortController();
@@ -277,11 +326,14 @@
 
   el("notifyBtn").addEventListener("click", async () => {
     el("notifyDialog").showModal();
+    pushNavigation(path, "notify");
     try { await fetchDailyState(); }
     catch (_) { el("notifySummary").textContent = "เชื่อมต่อไม่สำเร็จ รายการที่เห็นอาจยังไม่ใช่ข้อมูลล่าสุด"; }
   });
-  el("notifyClose").addEventListener("click", () => el("notifyDialog").close());
-  el("notifyDialog").addEventListener("click", event => { if (event.target === el("notifyDialog")) el("notifyDialog").close(); });
+  function closeNotify() { if (!closeNavigationOverlay("notify")) el("notifyDialog").close(); }
+  el("notifyClose").addEventListener("click", closeNotify);
+  el("notifyDialog").addEventListener("click", event => { if (event.target === el("notifyDialog")) closeNotify(); });
+  el("notifyDialog").addEventListener("cancel", event => { event.preventDefault(); closeNotify(); });
   setInterval(() => { if (!document.hidden) fetchDailyState().catch(() => {}); }, 5000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) fetchDailyState().catch(() => {}); });
 
@@ -486,6 +538,7 @@
   }
 
   async function uploadPdf(file) {
+    resetNavigation();
     const formData = new FormData();
     formData.append("file", file);
 
@@ -584,6 +637,7 @@
   }
 
   async function loadLocalStockFile(file) {
+    resetNavigation();
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: "array" });
     const rows = mergeWorkbookRows(wb);
@@ -825,6 +879,7 @@
   function pickValue(value) {
     if (!allowNavigation()) return;
     path.push(value);
+    pushNavigation();
     renderLevel();
   }
 
@@ -911,8 +966,11 @@
   function selectSearchResult(index) {
     const item = searchMatches[index];
     if (!item) return;
-    path = [item.category, item.model];
     closeSearch();
+    path = [item.category];
+    pushNavigation();
+    path = [item.category, item.model];
+    pushNavigation();
     renderLevel();
   }
 
@@ -1349,15 +1407,17 @@
 
   function closeCodeOverlay(restoreFocus = true) {
     if (codeOverlay.hidden) return;
+    if (restoreFocus && closeNavigationOverlay("code")) return;
     codeOverlay.hidden = true;
     if (restoreFocus && codeReturnFocus && codeReturnFocus.isConnected) codeReturnFocus.focus();
     codeReturnFocus = null;
   }
 
-  function openCodeOverlay(code, returnFocus) {
+  function openCodeOverlay(code, returnFocus, addHistory = true) {
     codeReturnFocus = returnFocus;
     expandedItemCode.textContent = code;
     codeOverlay.hidden = false;
+    if (addHistory) pushNavigation(path, "code");
     expandedItemCode.focus();
     requestAnimationFrame(() => fitCode(expandedItemCode, 48));
     document.fonts.ready.then(() => fitCode(expandedItemCode, 48));
@@ -1426,6 +1486,7 @@
         choice.addEventListener("click", () => {
           pendingOverviewState = captureOverviewState(card);
           path = [path[0], path[1], storage, color];
+          pushNavigation();
           renderLevel();
         });
         colorsBox.appendChild(choice);
@@ -1764,9 +1825,14 @@
     renderSelectionDialog();
     if (!selectionMode) return;
     selectionModal.hidden = false;
+    pushNavigation(path, "selection");
     el("selectionClose").focus();
   });
-  function closeSelectionDialog() { selectionModal.hidden = true; selectionOpen.focus(); }
+  function closeSelectionDialog() {
+    if (closeNavigationOverlay("selection")) return;
+    selectionModal.hidden = true;
+    selectionOpen.focus();
+  }
   el("selectionClose").addEventListener("click", closeSelectionDialog);
   selectionModal.addEventListener("click", (event) => { if (event.target === selectionModal) closeSelectionDialog(); });
   document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !selectionModal.hidden) closeSelectionDialog(); });
@@ -1828,15 +1894,14 @@
 
   backBtn.addEventListener("click", () => {
     if (path.length === 0 || !allowNavigation()) return;
-    exitSelectionMode();
-    path.pop();
-    renderLevel();
+    history.back();
   });
 
   resetBtn.addEventListener("click", () => {
     if (!allowNavigation()) return;
     exitSelectionMode();
     closeSearch();
+    resetNavigation();
     path = [];
     renderLevel();
   });
